@@ -1,0 +1,5 @@
+#include "../../Flutter/Flutter-Release.xcconfig"
+#include "Warnings.xcconfig"
+
+// The packaged app carries an Apple-silicon Python and ffmpeg, so the app is built for Apple silicon only.
+ARCHS = arm64
