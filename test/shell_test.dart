@@ -712,6 +712,20 @@ void main() {
       expect(api.actions.last.$2, {'text': 'Summarise this video', 'plan': 'pln_r001'});
     });
 
+    testWidgets('a draft waiting to be made is one press, which sends the words', (tester) async {
+      final draft = {'id': 2, 'role': 'assistant', 'text': "I'll make a 50-second 9:16 keynote video with 8 scenes. Nothing is rendered yet.", 'model': 'qwen3:8b', 'plan_id': null, 'created_at': '2026-11-05', 'video': null, 'waiting_tool': false};
+      final api = await opened(tester, chat: chatView(messages: [draft], replies: [
+        {'label': 'Make it', 'text': 'make it'},
+        {'label': 'Cancel the draft', 'text': 'cancel the draft'},
+      ]));
+      await go(tester, 'Assistant');
+      expect(find.text('Cancel the draft'), findsOneWidget);
+      await tester.tap(find.text('Make it'));
+      await tester.pumpAndSettle();
+      expect(api.actions.last.$1, 'ask');
+      expect(api.actions.last.$2, {'text': 'make it', 'plan': 'pln_r001'});
+    });
+
     testWidgets('shows the words of a reply as they arrive, and can stop it', (tester) async {
       final api = await opened(tester);
       var polls = 0;

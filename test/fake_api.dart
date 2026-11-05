@@ -225,7 +225,7 @@ Json settingsView({String fallback = 'qwen3:8b', Json? ollama}) => {
   },
 };
 
-Json chatView({List<Json> messages = const [], List<Json> memory = const [], String? choice, Json? brief, bool canEdit = true}) => {
+Json chatView({List<Json> messages = const [], List<Json> memory = const [], String? choice, Json? brief, bool canEdit = true, List<Json> replies = const []}) => {
   'messages': messages,
   'memory': memory,
   'choice': choice,
@@ -233,6 +233,7 @@ Json chatView({List<Json> messages = const [], List<Json> memory = const [], Str
   'default': 'qwen3:8b',
   'brief': brief ?? briefView(),
   'can_edit': canEdit,
+  'replies': replies,
 };
 
 Json briefView({Json? asking, List<Json> answers = const []}) => {'asking': asking, 'total': 5, 'answers': answers};

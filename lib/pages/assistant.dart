@@ -170,6 +170,7 @@ class _AssistantPageState extends State<AssistantPage> {
     final model = widget.model;
     final messages = ((model.chat?['messages'] as List?) ?? const []).cast<Json>();
     final asking = model.asking;
+    final replies = ((model.chat?['replies'] as List?) ?? const []).cast<Json>();
     if (messages.isEmpty && asking == null) return _welcome();
     final saved = messages.where((item) => asking == null || item['text'] != asking || item != messages.last);
     final root = model.report?['root'];
@@ -217,6 +218,25 @@ class _AssistantPageState extends State<AssistantPage> {
                 : _Typing(key: const ValueKey('ai-typing'), status: model.job?.step),
           ),
         ],
+        // A reply the AI is waiting on, such as making a draft, is one press. Each sends words you could type.
+        if (asking == null && replies.isNotEmpty)
+          Arrive(
+            key: ValueKey(('replies', replies.map((item) => item['text']).join('|'), messages.length)),
+            child: Padding(
+              padding: const EdgeInsets.only(top: 4, bottom: 8),
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final item in replies)
+                    ActionChip(
+                      label: Text(item['label'] as String, style: small),
+                      onPressed: model.busy ? null : () => _send(item['text'] as String),
+                    ),
+                ],
+              ),
+            ),
+          ),
       ],
     );
   }
