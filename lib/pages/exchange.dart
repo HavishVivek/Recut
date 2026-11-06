@@ -1,6 +1,9 @@
+import 'dart:io';
+
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 
+import '../drop.dart';
 import '../engine.dart';
 import '../project.dart';
 import '../theme.dart';
@@ -141,14 +144,15 @@ class ReferenceButtons extends StatelessWidget {
   }
 }
 
-/// Photos of real parts, which a new video uses before looking online.
+/// Photos of real parts, which a new video uses before looking online. Each shows where it's
+/// used and what it shows, so a photo named IMG_1234.jpg can still be found as a drone.
 class PartPhotos extends StatelessWidget {
   const PartPhotos(this.model, {super.key});
 
   final ProjectModel model;
 
   Future<void> _add() async {
-    const pictures = XTypeGroup(label: 'Photos and 3D models', extensions: ['png', 'jpg', 'jpeg', 'webp', 'glb', 'gltf', 'stl', 'obj']);
+    const pictures = XTypeGroup(label: 'Photos and 3D models', extensions: [...pictureExtensions, ...modelExtensions]);
     final files = await openFiles(acceptedTypeGroups: [pictures]);
     if (files.isEmpty) return;
     await model.run('add_pictures', {'paths': [for (final file in files) file.path]}, 'Adding your photos');
@@ -156,18 +160,131 @@ class PartPhotos extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final names = model.pictures;
+    final photos = model.photos;
+    final unused = photos.where((photo) => photo['picture'] == true && (photo['scenes'] as List).isEmpty).length;
     return Section(
-      'Photos and 3D models of parts',
+      'Your photos and 3D models',
       children: [
-        const Text('Name each file after the part, like arduino-uno.jpg. New videos use these first, then look on Wikimedia Commons.', style: tiny),
+        const Text('New videos use these first, then look on Wikimedia Commons. A photo is found by its name and by what you say it shows.', style: tiny),
         const SizedBox(height: 4),
-        const Text('A 3D model replaces a part\'s built-in shapes in 3D scenes: servo.glb or sg90.stl for the whole part, and servo-motor.stl, servo-gears.stl and so on for the inside view.', style: tiny),
-        const SizedBox(height: 6),
-        if (names.isNotEmpty) Text(names.join(', '), style: small),
-        const SizedBox(height: 6),
-        OutlinedButton(onPressed: model.busy ? null : _add, child: const Text('Add photos or models')),
+        const Text('A 3D model replaces a part\'s built-in shapes: servo.glb for the whole part, servo-motor.stl and so on for the inside view.', style: tiny),
+        const SizedBox(height: 8),
+        if (photos.isNotEmpty) ...[
+          if (unused > 0 && photos.any((photo) => (photo['scenes'] as List).isNotEmpty))
+            Padding(padding: const EdgeInsets.only(bottom: 6), child: Text('$unused not used by the draft', style: tiny)),
+          Wrap(
+            spacing: 8,
+            runSpacing: 10,
+            children: [for (final photo in photos) _PhotoTile(key: ValueKey(photo['name']), model: model, photo: photo)],
+          ),
+          const SizedBox(height: 8),
+        ],
+        Wrap(
+          spacing: 8,
+          runSpacing: 6,
+          children: [
+            OutlinedButton(onPressed: model.busy ? null : _add, child: const Text('Add photos or models')),
+            // The photo model looks at new photos as they come in. This catches ones added before it was set up.
+            if (photos.any((photo) => photo['picture'] == true && (photo['words'] as String? ?? '').isEmpty))
+              TextButton(onPressed: model.busy ? null : () => model.run('describe_photos', {}, 'Looking at your photos'), child: const Text('Describe my photos')),
+          ],
+        ),
+        const SizedBox(height: 4),
+        const Text('Or drop them anywhere on the window.', style: tiny),
       ],
+    );
+  }
+}
+
+class _PhotoTile extends StatefulWidget {
+  const _PhotoTile({super.key, required this.model, required this.photo});
+
+  final ProjectModel model;
+  final Json photo;
+
+  @override
+  State<_PhotoTile> createState() => _PhotoTileState();
+}
+
+class _PhotoTileState extends State<_PhotoTile> {
+  // Two to a row in the Assistant's side panel.
+  static const _tile = 125.0;
+
+  late final _words = TextEditingController(text: widget.photo['words'] as String? ?? '');
+  final _focus = FocusNode();
+
+  @override
+  void initState() {
+    super.initState();
+    // A person's words are kept when they leave the box, as well as on Return.
+    _focus.addListener(() {
+      if (!_focus.hasFocus) _save();
+    });
+  }
+
+  @override
+  void didUpdateWidget(_PhotoTile old) {
+    super.didUpdateWidget(old);
+    final words = widget.photo['words'] as String? ?? '';
+    if (!_focus.hasFocus && _words.text != words) _words.text = words;
+  }
+
+  @override
+  void dispose() {
+    _words.dispose();
+    _focus.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    final words = _words.text.trim();
+    if (words == (widget.photo['words'] as String? ?? '') || widget.model.busy) return;
+    await widget.model.run('photo_words', {'name': widget.photo['name'], 'words': words}, 'Saving what the photo shows');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final photo = widget.photo;
+    final scenes = (photo['scenes'] as List).cast<int>();
+    final picture = photo['picture'] == true;
+    return SizedBox(
+      width: _tile,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(smallCorner),
+            child: Container(
+              width: _tile,
+              height: 80,
+              color: Graphite.raised,
+              alignment: Alignment.center,
+              child: picture
+                  ? Image.file(File(photo['path'] as String), width: _tile, height: 80, fit: BoxFit.contain, cacheWidth: 250,
+                      errorBuilder: (_, _, _) => const SizedBox.shrink())
+                  : const Text('3D model', style: tiny),
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(photo['name'] as String, style: mono, maxLines: 1, overflow: TextOverflow.ellipsis),
+          Text(scenes.isEmpty ? 'Not used' : 'Scene ${scenes.join(', ')}', style: tiny.copyWith(color: scenes.isEmpty ? Graphite.faint : Graphite.text)),
+          if (picture)
+            TextField(
+              controller: _words,
+              focusNode: _focus,
+              style: small,
+              maxLength: 60,
+              decoration: InputDecoration(
+                hintText: 'What it shows',
+                isDense: true,
+                helperText: photo['by'] == 'model' ? 'Described by the photo model' : null,
+                helperStyle: tiny,
+              ),
+              buildCounter: nearLimitCounter,
+              onSubmitted: (_) => _save(),
+            ),
+        ],
+      ),
     );
   }
 }

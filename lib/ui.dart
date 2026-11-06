@@ -13,6 +13,12 @@ const good = Graphite.mint;
 const waiting = Graphite.amber;
 const bad = Graphite.coral;
 
+/// A text box's limit shows before it's reached, never as a silent cut. A real brief lost its end at a hidden limit.
+Widget? nearLimitCounter(BuildContext context, {required int currentLength, required bool isFocused, required int? maxLength}) {
+  if (maxLength == null || currentLength < maxLength * 0.8) return null;
+  return Text('$currentLength of $maxLength characters', style: tiny);
+}
+
 /// For anything exact: frames, times, IDs, hashes and paths.
 const mono = TextStyle(fontFamily: monospace, fontSize: 12, color: Graphite.muted);
 

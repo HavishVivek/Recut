@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:aie_app/engine.dart';
 
 /// Stands in for the engine with the same JSON the real one sends. Actions are
@@ -61,8 +62,13 @@ class FakeApi implements Api {
     return 'job';
   }
 
+  /// Holds every poll after the first until it completes, so a page can be seen mid-job.
+  Completer<void>? hold;
+  int _polls = 0;
+
   @override
   Future<Json> job(String id) async {
+    if (hold != null && _polls++ > 0) await hold!.future;
     final (action, body) = actions.last;
     return outcome?.call(action, body) ?? {'name': action, 'state': 'done'};
   }
@@ -112,10 +118,26 @@ class FakeApi implements Api {
   Future<Json> modelFiles(String repo) async => {
     'repo': repo,
     'recommended': 'Q4_K_M',
+    'memory': 4000000000,
     'files': [
-      {'tag': 'Q3_K_L', 'size': 1800000000},
-      {'tag': 'Q4_K_M', 'size': 2019393189},
+      {'tag': 'Q3_K_L', 'size': 1800000000, 'fits': true},
+      {'tag': 'Q4_K_M', 'size': 2019393189, 'fits': true},
+      {'tag': 'Q8_0', 'size': 3400000000, 'fits': false},
     ],
+    'about': {
+      'summary': 'Llama 3.2 is a family of small multilingual models, tuned for chat and summaries.',
+      'summary_from': 'meta-llama/Llama-3.2-3B-Instruct',
+      'base_model': 'meta-llama/Llama-3.2-3B-Instruct',
+      'parameters': 3210000000,
+      'context': 131072,
+      'architecture': 'llama',
+      'license': 'llama3.2',
+      'updated': '2024-09-25',
+      'downloads': 120000,
+      'likes': 40,
+      'vision': false,
+      'link': 'https://huggingface.co/$repo',
+    },
   };
 
   @override
@@ -225,7 +247,7 @@ Json settingsView({String fallback = 'qwen3:8b', Json? ollama}) => {
   },
 };
 
-Json chatView({List<Json> messages = const [], List<Json> memory = const [], String? choice, Json? brief, bool canEdit = true, List<Json> replies = const []}) => {
+Json chatView({List<Json> messages = const [], List<Json> memory = const [], String? choice, Json? brief, bool canEdit = true, List<Json> replies = const [], Json? draft}) => {
   'messages': messages,
   'memory': memory,
   'choice': choice,
@@ -234,6 +256,7 @@ Json chatView({List<Json> messages = const [], List<Json> memory = const [], Str
   'brief': brief ?? briefView(),
   'can_edit': canEdit,
   'replies': replies,
+  'draft': draft,
 };
 
 Json briefView({Json? asking, List<Json> answers = const []}) => {'asking': asking, 'total': 5, 'answers': answers};
@@ -248,7 +271,7 @@ Json question({String? suggested}) => {
   'suggested': suggested,
 };
 
-Json state_({bool withFootage = false, List<Json>? plans, String? latest, Json? style, List<Json> missing = const []}) => {
+Json state_({bool withFootage = false, List<Json>? plans, String? latest, Json? style, List<Json> missing = const [], List<Json> photos = const []}) => {
   'report': {
     'stem': 'demo',
     'root': '/projects/demo',
@@ -263,6 +286,8 @@ Json state_({bool withFootage = false, List<Json>? plans, String? latest, Json? 
   'activity': <String, dynamic>{'events': <Json>[], 'model_calls': <Json>[], 'assets': <Json>[], 'versions': <Json>[]},
   'stale_titles': <Json>[],
   'latest_plan': latest,
+  'pictures': [for (final photo in photos) photo['name']],
+  'photos': photos,
 };
 
 Json footage({String? offer, bool analysed = true, List<Json>? clips}) => {

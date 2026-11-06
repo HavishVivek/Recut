@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:aie_app/drop.dart';
 import 'package:aie_app/engine.dart';
 import 'package:aie_app/main.dart';
 import 'package:aie_app/pages/finds.dart';
@@ -317,11 +320,12 @@ void main() {
     List<Json>? plans,
     Json? style,
     Json? chat,
+    List<Json> photos = const [],
   }) async {
     final api = FakeApi()
       ..shownPlan = shownPlan
       ..chatState = chat ?? chatView()
-      ..current = state_(withFootage: true, plans: plans ?? [planEntry('pln_r001')], latest: 'pln_r001', style: style);
+      ..current = state_(withFootage: true, plans: plans ?? [planEntry('pln_r001')], latest: 'pln_r001', style: style, photos: photos);
     final saved = api.current;
     await launch(tester, api);
     api.current = saved;
@@ -624,6 +628,54 @@ void main() {
     expect(api.actions.last.$2, {'id': 'abcdefghijk', 'short': true});
   });
 
+  testWidgets('a found video is looked at before it is used, and only its id is sent', (tester) async {
+    final api = await opened(tester);
+    api.outcome = (action, body) => switch (action) {
+      'find_references' => {
+        'name': action,
+        'state': 'done',
+        'result': {
+          'results': [
+            {'id': 'abcdefghijk', 'title': 'Candy-grabbing robot arm', 'channel': 'Maker', 'seconds': 52, 'views': 9889528, 'short': true, 'link': 'x'},
+          ],
+        },
+      },
+      'preview_reference' => {
+        'name': action,
+        'state': 'done',
+        'result': {
+          'id': 'abcdefghijk', 'short': true, 'title': 'Candy-grabbing robot arm', 'channel': 'Maker', 'seconds': 52, 'views': 9889528, 'likes': 1200,
+          'uploaded': '2025-01-02', 'description': 'Four servos and an Arduino.\nParts list below.', 'chapters': [{'title': 'Gripper', 'seconds': 12}],
+          'link': 'https://www.youtube.com/shorts/abcdefghijk', 'stills': ['/nowhere/hqdefault.png', '/nowhere/hq1.png'],
+        },
+      },
+      _ => {'name': action, 'state': 'done'},
+    };
+    await go(tester, 'Style');
+    await tester.enterText(find.widgetWithText(TextField, 'What the video is about, such as robotic arm build'), 'robot arm');
+    await tester.tap(find.descendant(of: find.byType(FindReferences), matching: find.widgetWithText(FilledButton, 'Search')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.descendant(of: find.byType(FindReferences), matching: find.widgetWithText(TextButton, 'Preview')));
+    await tester.pumpAndSettle();
+    expect(api.actions.last.$1, 'preview_reference');
+    expect(api.actions.last.$2, {'id': 'abcdefghijk', 'short': true});
+    expect(find.text('Four servos and an Arduino.\nParts list below.'), findsOneWidget);
+    expect(find.textContaining('9.9M views  ·  1k likes  ·  0:52  ·  2025-01-02'), findsOneWidget);
+    expect(find.text('0:12  Gripper'), findsOneWidget);
+    expect(find.widgetWithText(TextButton, 'Watch on YouTube'), findsOneWidget);
+    // Closing changes nothing.
+    await tester.tap(find.widgetWithText(TextButton, 'Close'));
+    await tester.pumpAndSettle();
+    expect(api.actions.last.$1, 'preview_reference');
+    // Tapping the title opens it too, and its Use this uses it.
+    await tester.tap(find.text('Candy-grabbing robot arm'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Use this'));
+    await tester.pumpAndSettle();
+    expect(api.actions.last.$1, 'use_reference');
+    expect(api.actions.last.$2, {'id': 'abcdefghijk', 'short': true});
+  });
+
   testWidgets('free music is offered with its licence, and the chosen track shows its credit', (tester) async {
     final api = await opened(tester);
     api.outcome = (action, body) => switch (action) {
@@ -710,6 +762,112 @@ void main() {
       await tester.pumpAndSettle();
       expect(api.actions.last.$1, 'ask');
       expect(api.actions.last.$2, {'text': 'Summarise this video', 'plan': 'pln_r001'});
+    });
+
+    testWidgets('a long brief shows its limit before reaching it, instead of being cut silently', (tester) async {
+      await opened(tester);
+      await go(tester, 'Assistant');
+      final box = find.widgetWithText(TextField, 'Ask a question, or say what to change');
+      await tester.enterText(box, 'a' * 2100);
+      await tester.pump();
+      expect(find.textContaining('of 8000 characters'), findsNothing, reason: 'a 2,100-character brief is well inside the limit');
+      await tester.enterText(box, 'a' * 7000);
+      await tester.pump();
+      expect(find.text('7000 of 8000 characters'), findsOneWidget);
+    });
+
+    testWidgets('a draft shows its references and pictures, and each is chosen or removed with one press', (tester) async {
+      final draft = {
+        'reference': '',
+        'references': [
+          {'number': 1, 'id': 'abcdefghijk', 'short': true, 'title': 'Arduino in 60 seconds', 'channel': 'Maker', 'seconds': 58, 'views': 1200000, 'link': 'https://www.youtube.com/shorts/abcdefghijk', 'chosen': false},
+          {'number': 2, 'id': 'bcdefghijkl', 'short': true, 'title': 'Arduino Uno explained', 'channel': 'Bench', 'seconds': 45, 'views': 8000, 'link': 'https://www.youtube.com/shorts/bcdefghijkl', 'chosen': false},
+        ],
+        'pictures': [
+          {'scene': 2, 'term': 'RC car', 'path': '/nowhere/S2-1.png', 'credit': '"Nitro Buggy RC Car.jpg" by Quist, CC BY-SA 4.0, from Wikimedia Commons'},
+        ],
+      };
+      final message = {'id': 2, 'role': 'assistant', 'text': "I'll make a 60-second 9:16 keynote video. I found these references on YouTube.", 'model': 'qwen3:8b', 'plan_id': null, 'created_at': '2026-11-05', 'video': null, 'waiting_tool': false};
+      final api = await opened(tester, chat: chatView(messages: [message], draft: draft, replies: [
+        {'label': 'No reference', 'text': 'no reference'},
+        {'label': 'Cancel the draft', 'text': 'cancel the draft'},
+      ]));
+      await go(tester, 'Assistant');
+      expect(find.text('2. Arduino Uno explained'), findsOneWidget);
+      expect(find.text('Maker · 1.2M views · 58 s'), findsOneWidget);
+      expect(find.text('Scene 2 · RC car'), findsOneWidget);
+      expect(find.text('Make it'), findsNothing, reason: 'making waits for a reference to be picked');
+      await tester.tap(find.text('Use this').last);
+      await tester.pumpAndSettle();
+      expect(api.actions.last.$2, {'text': 'use reference 2', 'plan': 'pln_r001'});
+      await tester.tap(find.text('No picture'));
+      await tester.pumpAndSettle();
+      expect(api.actions.last.$2, {'text': 'no picture in scene 2', 'plan': 'pln_r001'});
+    });
+
+    testWidgets('a draft is drawn as a storyboard, and each scene is changed from its still', (tester) async {
+      Json draftWith(List<String?> paths) => {
+        'reference': '', 'references': <Json>[], 'pictures': <Json>[], 'keynote': true, 'upright': true,
+        'storyboard': [for (final (index, path) in paths.indexed) {'scene': index + 1, 'path': path}],
+      };
+      final message = {'id': 2, 'role': 'assistant', 'text': "I'll make a 30-second keynote video.", 'model': 'qwen3:8b', 'plan_id': null, 'created_at': '2026-11-06', 'video': null, 'waiting_tool': false};
+      final api = await opened(tester, chat: chatView(messages: [message], draft: draftWith([null, null, null])));
+      api.outcome = (action, body) {
+        if (action == 'storyboard') {
+          api.chatState = chatView(messages: [message], draft: {...draftWith(['/nowhere/a.png', '/nowhere/b.png', '/nowhere/c.png']), 'problems': ['"Game plan" lands on "Demo" in scene 3']});
+        }
+        return {'name': action, 'state': 'done'};
+      };
+      await go(tester, 'Assistant');
+      expect(find.text('One still of each scene, drawn half size. Nothing is made until you say make it.'), findsOneWidget);
+      await tester.tap(find.text('Show storyboard'));
+      await tester.pumpAndSettle();
+      expect(api.actions.last.$1, 'storyboard');
+      expect(find.byTooltip('Scene 3'), findsOneWidget);
+      expect(find.text('"Game plan" lands on "Demo" in scene 3.'), findsOneWidget);
+      await tester.tap(find.byTooltip('Scene 1'));
+      await tester.pumpAndSettle();
+      expect(find.text('Move earlier'), findsNothing, reason: 'the first scene has nowhere earlier to go');
+      await tester.tap(find.text('Move later'));
+      await tester.pumpAndSettle();
+      expect(api.actions.last.$2, {'text': 'move scene 1 after scene 2', 'plan': 'pln_r001'});
+      await tester.tap(find.byTooltip('Scene 2'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Change the words…'));
+      await tester.pumpAndSettle();
+      expect(find.widgetWithText(TextField, 'change scene 2 to '), findsOneWidget);
+    });
+
+    testWidgets("a draft's reference is previewed before it's picked", (tester) async {
+      final draft = {
+        'reference': '',
+        'references': [
+          {'number': 1, 'id': 'abcdefghijk', 'short': true, 'title': 'Arduino in 60 seconds', 'channel': 'Maker', 'seconds': 58, 'views': 1200000, 'link': 'https://www.youtube.com/shorts/abcdefghijk', 'chosen': false},
+        ],
+        'pictures': [],
+      };
+      final message = {'id': 2, 'role': 'assistant', 'text': 'I found these references on YouTube.', 'model': 'qwen3:8b', 'plan_id': null, 'created_at': '2026-11-05', 'video': null, 'waiting_tool': false};
+      final api = await opened(tester, chat: chatView(messages: [message], draft: draft));
+      api.outcome = (action, body) => switch (action) {
+        'preview_reference' => {
+          'name': action,
+          'state': 'done',
+          'result': {'id': 'abcdefghijk', 'short': true, 'title': 'Arduino in 60 seconds', 'channel': 'Maker', 'seconds': 58, 'views': 1200000, 'likes': 0,
+                     'uploaded': '', 'description': '', 'chapters': [], 'link': 'https://www.youtube.com/shorts/abcdefghijk', 'stills': []},
+        },
+        _ => {'name': action, 'state': 'done'},
+      };
+      await go(tester, 'Assistant');
+      await tester.tap(find.widgetWithText(TextButton, 'Preview'));
+      await tester.pumpAndSettle();
+      expect(api.actions.last.$1, 'preview_reference');
+      expect(api.actions.last.$2, {'id': 'abcdefghijk', 'short': true});
+      expect(find.text('YouTube had no stills for this video.'), findsOneWidget);
+      expect(find.text('No description.'), findsOneWidget);
+      await tester.tap(find.widgetWithText(FilledButton, 'Use this'));
+      await tester.pumpAndSettle();
+      expect(api.actions.last.$1, 'ask');
+      expect(api.actions.last.$2, {'text': 'use reference 1', 'plan': 'pln_r001'});
     });
 
     testWidgets('a draft waiting to be made is one press, which sends the words', (tester) async {
@@ -1219,6 +1377,81 @@ void main() {
     });
   });
 
+  testWidgets('a render shows how far it is with a bar that fills, not a spinner', (tester) async {
+    final api = await opened(tester);
+    var rendering = true;
+    api.hold = Completer<void>();
+    api.outcome = (action, body) => rendering
+        ? {'name': action, 'state': 'running', 'step': 'Rendering scene 2 of 6, 300 of 1200 frames, 1:20 left', 'progress': {'done': 300, 'total': 1200, 'left': 80}}
+        : {'name': action, 'state': 'done', 'result': {'words': 'robot arm', 'why': ''}};
+    await go(tester, 'Style');
+    await tester.tap(find.text('Suggest words'));
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.text('Rendering scene 2 of 6, 300 of 1200 frames, 1:20 left'), findsOneWidget);
+    final bar = tester.widget<LinearProgressIndicator>(find.byType(LinearProgressIndicator).last);
+    expect(bar.value, closeTo(0.25, 0.001));
+    rendering = false;
+    api.hold!.complete();
+    await tester.pumpAndSettle();
+    expect(find.text('Rendering scene 2 of 6, 300 of 1200 frames, 1:20 left'), findsNothing);
+  });
+
+  group('photos in', () {
+    testWidgets('dropped photos join the project, and anything else is refused in words', (tester) async {
+      final api = await opened(tester);
+      Drops.instance.hover(true);
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.text('Drop photos, 3D models or a video'), findsOneWidget);
+      Drops.instance.drop(['/Users/me/drone.JPG', '/Users/me/servo.stl', '/Users/me/notes.pdf']);
+      await tester.pumpAndSettle();
+      expect(Drops.instance.over, isFalse);
+      expect(api.actions.last.$1, 'add_pictures');
+      expect(api.actions.last.$2, {'paths': ['/Users/me/drone.JPG', '/Users/me/servo.stl']});
+      expect(find.textContaining("notes.pdf isn't a photo, 3D model or video"), findsOneWidget);
+    });
+
+    testWidgets('a dropped video asks what it is for', (tester) async {
+      final api = await opened(tester);
+      Drops.instance.drop(['/Users/me/take 2.mov']);
+      await tester.pumpAndSettle();
+      expect(find.text('take 2.mov'), findsOneWidget);
+      await tester.tap(find.text('Use as the reference'));
+      await tester.pumpAndSettle();
+      expect(api.actions.last.$1, 'reference');
+      expect(api.actions.last.$2, {'path': '/Users/me/take 2.mov'});
+      Drops.instance.drop(['/Users/me/take 3.mp4']);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Add as a clip'));
+      await tester.pumpAndSettle();
+      expect(api.actions.last.$2, {'path': '/Users/me/take 3.mp4'});
+      expect(api.actions.last.$1, 'add_clip');
+    });
+
+    testWidgets('each photo shows where it is used, and what it shows can be said in words', (tester) async {
+      final api = await opened(tester, photos: [
+        {'name': 'IMG_1234.jpg', 'path': '/nowhere/IMG_1234.jpg', 'picture': true, 'words': '', 'by': '', 'scenes': <int>[]},
+        {'name': 'use-drone.png', 'path': '/nowhere/use-drone.png', 'picture': true, 'words': 'drone', 'by': 'model', 'scenes': [3, 7]},
+        {'name': 'servo.glb', 'path': '/nowhere/servo.glb', 'picture': false, 'words': '', 'by': '', 'scenes': <int>[]},
+      ]);
+      await go(tester, 'Assistant');
+      await tester.scrollUntilVisible(find.text('IMG_1234.jpg'), 200, scrollable: find.byType(Scrollable).last);
+      expect(find.text('Scene 3, 7'), findsOneWidget);
+      expect(find.text('Not used'), findsNWidgets(2));
+      expect(find.text('Described by the photo model'), findsOneWidget);
+      expect(find.text('3D model'), findsOneWidget);
+      expect(find.text('1 not used by the draft'), findsOneWidget);
+      await tester.enterText(find.widgetWithText(TextField, 'What it shows').first, 'quadcopter drone');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+      expect(api.actions.last.$1, 'photo_words');
+      expect(api.actions.last.$2, {'name': 'IMG_1234.jpg', 'words': 'quadcopter drone'});
+      // A photo with no words can be looked at by the photo model.
+      await tester.tap(find.text('Describe my photos'));
+      await tester.pumpAndSettle();
+      expect(api.actions.last.$1, 'describe_photos');
+    });
+  });
+
   group('settings', () {
     testWidgets('a Hugging Face model is found, downloaded and then listed', (tester) async {
       final api = FakeApi();
@@ -1229,8 +1462,16 @@ void main() {
       await tester.pumpAndSettle();
       expect(api.modelSearches, ['llama 3b']);
       expect(find.text('120k downloads'), findsOneWidget);
-      await tester.tap(find.widgetWithText(TextButton, 'Choose'));
+      await tester.tap(find.widgetWithText(TextButton, 'Details'));
       await tester.pumpAndSettle();
+      // What the model is shows before anything downloads.
+      expect(find.text('Llama 3.2 is a family of small multilingual models, tuned for chat and summaries.'), findsOneWidget);
+      expect(find.text('From the card of meta-llama/Llama-3.2-3B-Instruct'), findsOneWidget);
+      expect(find.textContaining('3.2B parameters  ·  131k context  ·  licence llama3.2'), findsOneWidget);
+      expect(find.widgetWithText(TextButton, 'Open on Hugging Face'), findsOneWidget);
+      expect(find.text('Q8_0  3.2 GB  too big'), findsOneWidget);
+      expect(find.textContaining('This Mac has 3.7 GB of memory'), findsOneWidget);
+      expect(api.downloads, isEmpty);
       // The size Ollama picks by default is chosen first.
       expect(find.widgetWithText(FilledButton, 'Download Q4_K_M'), findsOneWidget);
       await tester.tap(find.textContaining('Q3_K_L'));

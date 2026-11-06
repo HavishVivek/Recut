@@ -101,10 +101,10 @@ class _ReviewPageState extends State<ReviewPage> {
           minLines: 2,
           maxLines: 3,
           maxLength: 300,
+          buildCounter: nearLimitCounter,
           style: small,
           decoration: const InputDecoration(
             isDense: true,
-            counterText: '',
             hintText: 'Make a tight rough cut of this how-to video, with one title near the start.',
           ),
         ),
@@ -592,8 +592,9 @@ class _ReviewPageState extends State<ReviewPage> {
               controller: _note,
               enabled: model.plan != null,
               maxLength: 500,
+              buildCounter: nearLimitCounter,
               onSubmitted: (_) => _addNote(),
-              decoration: const InputDecoration(counterText: '', hintText: 'Note at this moment, such as: make this title faster'),
+              decoration: const InputDecoration(hintText: 'Note at this moment, such as: make this title faster'),
             ),
           ),
           IconButton(

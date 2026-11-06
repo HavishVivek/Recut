@@ -6,6 +6,7 @@ import '../motion.dart';
 import '../project.dart';
 import '../theme.dart';
 import '../ui.dart';
+import 'preview.dart';
 
 String clock(num seconds) {
   final whole = seconds.round();
@@ -90,6 +91,11 @@ class _FindReferencesState extends State<FindReferences> {
     if (done) model.say('Using “${video['title']}” as the reference');
   }
 
+  /// Shows the video's stills and details first. Its own Use this does what Use does here.
+  Future<void> _preview(Json video) async {
+    if (await showVideoPreview(context, model, video) && mounted) await _use(video);
+  }
+
   Widget _result(Json video, int index) {
     final dimmed = _using != null && _using != video['id'];
     return Arrive(
@@ -107,13 +113,20 @@ class _FindReferencesState extends State<FindReferences> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(video['title'] as String, style: small, overflow: TextOverflow.ellipsis),
+                  MouseRegion(
+                    cursor: SystemMouseCursors.click,
+                    child: GestureDetector(
+                      onTap: model.busy ? null : () => _preview(video),
+                      child: Text(video['title'] as String, style: small, overflow: TextOverflow.ellipsis),
+                    ),
+                  ),
                   const SizedBox(height: 2),
                   Text('${video['channel']}  ·  ${views(video['views'] as num)}  ·  ${clock(video['seconds'] as num)}', style: mono, overflow: TextOverflow.ellipsis),
                 ],
               ),
             ),
             if (video['short'] == true) ...[const Tag('short'), const SizedBox(width: 8)],
+            TextButton(onPressed: model.busy ? null : () => _preview(video), child: const Text('Preview')),
             TextButton(onPressed: model.busy ? null : () => _use(video), child: const Text('Use')),
           ],
         ),

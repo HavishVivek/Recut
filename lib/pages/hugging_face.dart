@@ -186,10 +186,16 @@ class _HuggingFaceSettingsState extends State<HuggingFaceSettings> {
       child: Row(
         children: [
           Expanded(
-            child: Text(
-              repo,
-              style: mono.copyWith(color: Graphite.text),
-              overflow: TextOverflow.ellipsis,
+            child: MouseRegion(
+              cursor: SystemMouseCursors.click,
+              child: GestureDetector(
+                onTap: _looking ? null : () => _choose(repo),
+                child: Text(
+                  repo,
+                  style: mono.copyWith(color: Graphite.text),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
             ),
           ),
           Text('${_count(item['downloads'] as num)} downloads', style: mono),
@@ -197,24 +203,73 @@ class _HuggingFaceSettingsState extends State<HuggingFaceSettings> {
           SizedBox(
             width: 90,
             child: chosen
-                ? const Center(child: Tag('chosen', color: good))
-                : TextButton(onPressed: _looking ? null : () => _choose(repo), child: const Text('Choose')),
+                ? const Center(child: Tag('open', color: good))
+                : TextButton(onPressed: _looking ? null : () => _choose(repo), child: const Text('Details')),
           ),
         ],
       ),
     );
   }
 
+  String _parameters(num count) => count >= 1e9 ? '${(count / 1e9).toStringAsFixed(1)}B parameters' : '${(count / 1e6).round()}M parameters';
+
+  /// What the model is, from its card and Hugging Face's own facts, so a person can judge it before downloading.
+  Widget _about(Json about) {
+    final summary = about['summary'] as String? ?? '';
+    final from = about['summary_from'] as String? ?? '';
+    final base = about['base_model'] as String? ?? '';
+    final facts = [
+      if ((about['parameters'] as num? ?? 0) > 0) _parameters(about['parameters'] as num),
+      if ((about['context'] as num? ?? 0) > 0) '${_count(about['context'] as num)} context',
+      if ((about['license'] as String? ?? '').isNotEmpty) 'licence ${about['license']}',
+      if ((about['updated'] as String? ?? '').isNotEmpty) 'updated ${about['updated']}',
+      '${_count(about['downloads'] as num? ?? 0)} downloads',
+      '${_count(about['likes'] as num? ?? 0)} likes',
+    ];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(facts.join('  ·  '), style: mono),
+        if (about['vision'] == true) ...[
+          const SizedBox(height: 6),
+          const Tag('can see pictures'),
+        ],
+        const SizedBox(height: 8),
+        if (summary.isNotEmpty) ...[
+          SelectableText(summary, style: small),
+          if (from.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 4), child: Text('From the card of $from', style: tiny)),
+        ] else
+          Text(
+            base.isNotEmpty
+                ? 'Made from $base. Its card doesn’t say more without a sign-in, so open it on Hugging Face to read about it.'
+                : 'Its card doesn’t say what it is. Open it on Hugging Face to read more.',
+            style: quiet,
+          ),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton(onPressed: () => openInBrowser(about['link'] as String), child: const Text('Open on Hugging Face')),
+        ),
+      ],
+    );
+  }
+
   Widget _chooser(Json files) {
     final options = (files['files'] as List).cast<Json>();
+    final about = files['about'] as Json?;
+    final memory = files['memory'] as num? ?? 0;
+    final tooBig = options.any((option) => option['fits'] == false);
     return Padding(
       padding: const EdgeInsets.only(top: 10),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Text('${files['repo']}', style: mono.copyWith(color: Graphite.text)),
+          const SizedBox(height: 6),
+          if (about != null) _about(about),
           const SizedBox(height: 4),
           const Text('Smaller files are quicker and use less memory. Larger ones answer better.', style: tiny),
+          if (tooBig && memory > 0)
+            Text('This Mac has ${_size(memory)} of memory. A file marked too big would leave too little for everything else.', style: tiny),
           const SizedBox(height: 8),
           Wrap(
             spacing: 6,
@@ -222,7 +277,10 @@ class _HuggingFaceSettingsState extends State<HuggingFaceSettings> {
             children: [
               for (final option in options)
                 ChoiceChip(
-                  label: Text('${option['tag']}  ${_size(option['size'] as num)}', style: mono.copyWith(color: Graphite.text)),
+                  label: Text(
+                    '${option['tag']}  ${_size(option['size'] as num)}${option['fits'] == false ? '  too big' : ''}',
+                    style: mono.copyWith(color: option['fits'] == false ? Graphite.amber : Graphite.text),
+                  ),
                   selected: _tag == option['tag'],
                   side: BorderSide(color: _tag == option['tag'] ? Graphite.mint : Graphite.line),
                   onSelected: (_) => setState(() => _tag = option['tag'] as String),

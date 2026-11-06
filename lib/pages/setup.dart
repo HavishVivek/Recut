@@ -119,10 +119,12 @@ class _SetupPageState extends State<SetupPage> {
     final actions = (row['actions'] as List).cast<Json>();
     final job = _view?['job'] as Json?;
     final download = _view?['download'] as Json?;
-    final busy = (row['id'] == 'speech' && job?['running'] == true) || (row['id'] == 'ollama' && download?['running'] == true);
+    // One model downloads at a time, and its progress shows on the row it's for.
+    final downloadRow = (download?['name'] as String? ?? '').startsWith('gemma3') ? 'vision' : 'ollama';
+    final busy = (row['id'] == 'speech' && job?['running'] == true) || (row['id'] == downloadRow && download?['running'] == true);
     final failed = switch (row['id']) {
       'speech' => job?['error'] as String?,
-      'ollama' => download?['error'] as String?,
+      final id when id == downloadRow => download?['error'] as String?,
       _ => null,
     };
     return Padding(

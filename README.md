@@ -4,19 +4,23 @@ The macOS app for the local editor. It's a Flutter window over the Python engine
 
 ## Running it
 
+For using the app, run a release build. It still uses the engine in this checkout:
+
 ```bash
-flutter run -d macos
+flutter run -d macos --release
 ```
 
 Or build it and open the app:
 
 ```bash
-flutter build macos --debug
+flutter build macos --release
 ```
 
 ```bash
-open build/macos/Build/Products/Debug/aie_app.app
+open build/macos/Build/Products/Release/aie_app.app
 ```
+
+A debug build (`flutter run -d macos`) is only for working on the app. If a key's release goes to another app, for example because another app came to the front while the key was held, a debug build stops taking any typing. Its log repeats "A KeyDownEvent is dispatched, but the state shows that the physical key is already pressed". Restart it, or use a release build, which doesn't run that check.
 
 Close any running copy first. `open` only brings an old one forward.
 

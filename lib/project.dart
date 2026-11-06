@@ -1,7 +1,8 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart';
 
 import 'engine.dart';
 
@@ -17,7 +18,26 @@ class RunningJob {
   /// Set when the job can be cancelled, which only applying a plan can.
   final String? plan;
   String? step;
+  // While EffectCraft renders: {'done', 'total', 'left'} for a progress bar.
+  Json? progress;
   final DateTime started;
+}
+
+/// Tells a person a long job has ended when they're in another app. Only news is said, and
+/// only when they can't see the window, because the status bar says it otherwise.
+class Notify {
+  static const _channel = MethodChannel('aie/notify');
+  static const after = Duration(seconds: 30);
+
+  static Future<void> show(String title, String body) async {
+    try {
+      await _channel.invokeMethod('show', {'title': title, 'body': body});
+    } catch (_) {
+      // A notification is a courtesy. Without one, the status bar still says it.
+    }
+  }
+
+  static bool get away => WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed;
 }
 
 /// The open project, as the pages see it. The engine stays the source of truth:
@@ -60,6 +80,7 @@ class ProjectModel extends ChangeNotifier {
   Json? get style => state?['style'] as Json?;
   Json? get music => state?['music'] as Json?;
   List<String> get pictures => ((state?['pictures'] as List?) ?? const []).cast<String>();
+  List<Json> get photos => ((state?['photos'] as List?) ?? const []).cast<Json>();
   Json? get activity => state?['activity'] as Json?;
   String? get planId => plan?['id'] as String?;
   List<Json> get plans =>
@@ -198,6 +219,7 @@ class ProjectModel extends ChangeNotifier {
           break;
         }
         following.step = latest['step'] as String?;
+        following.progress = latest['progress'] as Json?;
         onUpdate?.call(latest);
         _changed();
         await Future<void>.delayed(poll ?? pollEvery);
@@ -210,6 +232,10 @@ class ProjectModel extends ChangeNotifier {
       problem = '$error';
     }
     job = null;
+    if (outcome != null && DateTime.now().difference(following.started) >= Notify.after && Notify.away) {
+      final done = outcome['state'] == 'done';
+      unawaited(Notify.show(done ? '$label: done' : '$label: stopped', done ? 'Open AI Editor to see it.' : (outcome['error'] as String? ?? 'Open AI Editor to see why.')));
+    }
     if (quiet) {
       _changed();
     } else {
@@ -335,6 +361,12 @@ extension Assistant on ProjectModel {
     asking = null;
     reply = '';
     notifyAfterChange();
+  }
+
+  /// Draws the waiting draft as one still per scene. Nothing is made, and the stills show on the draft.
+  Future<void> drawStoryboard() async {
+    await run('storyboard', {}, 'Drawing the storyboard', quiet: true);
+    await loadChat();
   }
 
   /// Rebuilds the current cut with what a person said they want.

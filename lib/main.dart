@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
+import 'drop.dart';
 import 'engine.dart';
 import 'motion.dart';
 import 'pages/activity.dart';
@@ -98,6 +99,7 @@ class _ShellState extends State<Shell> {
   @override
   void initState() {
     super.initState();
+    Drops.instance.onDropped = _dropped;
     if (widget.api != null) {
       _model = ProjectModel(widget.api!, pollEvery: Duration.zero);
       _openSetupIfNeeded(widget.api!);
@@ -123,9 +125,47 @@ class _ShellState extends State<Shell> {
 
   @override
   void dispose() {
+    Drops.instance.onDropped = null;
     _engine?.stop();
     _model?.dispose();
     super.dispose();
+  }
+
+  /// Files dropped anywhere on the window. Photos and 3D models join the project's photos,
+  /// a video is asked about, and anything else is refused in words.
+  Future<void> _dropped(List<String> paths) async {
+    final model = _model;
+    if (model == null) return;
+    if (!model.isOpen) {
+      model.complain('Open a project first, then drop files on it.');
+      return;
+    }
+    final sorted = sortDropped(paths);
+    if (sorted.photos.isNotEmpty) {
+      final outcome = await model.run('add_pictures', {'paths': sorted.photos}, 'Adding your photos');
+      if (outcome?['state'] == 'done') model.say('Added ${sorted.photos.length} ${sorted.photos.length == 1 ? 'photo' : 'photos'}');
+    }
+    // Said after the photos are in, because starting a job clears what's shown.
+    if (sorted.other.isNotEmpty) {
+      final names = sorted.other.map((path) => path.split('/').last).join(', ');
+      model.complain('$names ${sorted.other.length == 1 ? "isn't" : "aren't"} a photo, 3D model or video, so ${sorted.photos.isEmpty ? 'nothing was' : 'it wasn\'t'} added.');
+    }
+    if (sorted.videos.isEmpty || !mounted) return;
+    final video = sorted.videos.first;
+    final use = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(video.split('/').last, overflow: TextOverflow.ellipsis),
+        content: const Text('What is this video for? A clip is edited. A reference lends its colours, title place and pace, and is never copied.', style: quiet),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(context, 'reference'), child: const Text('Use as the reference')),
+          FilledButton(onPressed: () => Navigator.pop(context, 'clip'), child: const Text('Add as a clip')),
+        ],
+      ),
+    );
+    if (use == 'clip') await model.run('add_clip', {'path': video}, 'Adding the clip');
+    if (use == 'reference') await model.run('reference', {'path': video}, 'Measuring the reference');
   }
 
   // How many times each page has opened, and when it last did, so its sections arrive in line.
@@ -208,12 +248,18 @@ class _ShellState extends State<Shell> {
   Widget build(BuildContext context) {
     final model = _model;
     return Scaffold(
-      body: model == null
-          ? _layout(context, null, _EngineNotice(error: _engineError), const SizedBox.shrink())
-          : AnimatedBuilder(
-              animation: model,
-              builder: (context, _) => _layout(context, model, _StatusBar(model: model), Stack(fit: StackFit.expand, children: _pages(model))),
-            ),
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          model == null
+              ? _layout(context, null, _EngineNotice(error: _engineError), const SizedBox.shrink())
+              : AnimatedBuilder(
+                  animation: model,
+                  builder: (context, _) => _layout(context, model, _StatusBar(model: model), Stack(fit: StackFit.expand, children: _pages(model))),
+                ),
+          const _DropOutline(),
+        ],
+      ),
     );
   }
 
@@ -507,13 +553,16 @@ class _StatusBar extends StatelessWidget {
   final ProjectModel model;
 
   /// Each state has its own key, so changing between them cross-fades.
-  Widget _content(RunningJob? job, String? problem) {
+  Widget _content(BuildContext context, RunningJob? job, String? problem) {
     if (job != null) {
       final step = job.step == null || job.step!.isEmpty ? job.label : job.step!;
+      final total = (job.progress?['total'] as num?) ?? 0;
+      // A render says how far it is, so its bar fills instead of spinning.
+      final share = total > 0 ? ((job.progress?['done'] as num? ?? 0) / total).clamp(0.0, 1.0).toDouble() : null;
       return Row(
         key: const ValueKey('job'),
         children: [
-          const SizedBox.square(dimension: 13, child: CircularProgressIndicator(strokeWidth: 2)),
+          SizedBox.square(dimension: 13, child: CircularProgressIndicator(strokeWidth: 2, value: share)),
           const SizedBox(width: 10),
           // The step cross-fades as it changes. The seconds count on their own, so they don't.
           Flexible(
@@ -522,6 +571,17 @@ class _StatusBar extends StatelessWidget {
             ),
           ),
           Text(', ${DateTime.now().difference(job.started).inSeconds} s', style: tiny),
+          if (share != null) ...[
+            const SizedBox(width: 12),
+            SizedBox(
+              width: 140,
+              child: TweenAnimationBuilder<double>(
+                tween: Tween(end: share),
+                duration: Motion.reduced(context) ? Duration.zero : Motion.settle,
+                builder: (context, value, _) => LinearProgressIndicator(value: value, minHeight: 3),
+              ),
+            ),
+          ],
           const Spacer(),
           if (job.plan != null) TextButton(onPressed: model.cancel, child: const Text('Cancel')),
         ],
@@ -564,7 +624,37 @@ class _StatusBar extends StatelessWidget {
     final problem = model.problem;
     return Panel(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-      child: SizedBox(height: 30, child: Swap(child: _content(job, problem))),
+      child: SizedBox(height: 30, child: Swap(child: _content(context, job, problem))),
+    );
+  }
+}
+
+
+/// A mint outline while files are over the window, so a person knows letting go adds them.
+class _DropOutline extends StatelessWidget {
+  const _DropOutline();
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      child: ListenableBuilder(
+        listenable: Drops.instance,
+        builder: (context, _) => AnimatedOpacity(
+          opacity: Drops.instance.over ? 1 : 0,
+          duration: Motion.reduced(context) ? Duration.zero : Motion.quick,
+          curve: Motion.curve,
+          child: Container(
+            margin: const EdgeInsets.all(6),
+            decoration: BoxDecoration(
+              color: Graphite.canvas.withValues(alpha: .72),
+              borderRadius: BorderRadius.circular(corner * 1.5),
+              border: Border.all(color: Graphite.mint, width: 2),
+            ),
+            alignment: Alignment.center,
+            child: const Text('Drop photos, 3D models or a video', style: TextStyle(fontSize: 18, color: Graphite.text)),
+          ),
+        ),
+      ),
     );
   }
 }
