@@ -98,7 +98,141 @@ class FakeApi implements Api {
   Future<Json> changeExtensions(Json body) async {
     if (refuseWith != null) throw EngineError(refuseWith!);
     extensionChanges.add(body);
-    return appSettings['extensions'] as Json;
+    final op = body['op'] as String?;
+    final ex = Map<String, dynamic>.from(appSettings['extensions'] as Json);
+    final servers = List<Json>.from(ex['servers'] as List);
+    if (op == 'test_server') {
+      final name = body['name'] as String;
+      final idx = servers.indexWhere((s) => s['name'] == name);
+      if (idx >= 0) {
+        servers[idx] = {
+          ...servers[idx],
+          'connection_status': 'connected',
+          'status': 'connected',
+          'plain_language': '$name is connected.',
+          'technical_detail': 'Protocol version 2025-06-18 initialization succeeded.',
+        };
+      }
+    } else if (op == 'discover_tools') {
+      final name = body['name'] as String;
+      final idx = servers.indexWhere((s) => s['name'] == name);
+      if (idx >= 0) {
+        servers[idx] = {
+          ...servers[idx],
+          'connection_status': 'connected',
+          'status': 'connected',
+          'plain_language': 'Discovered 2 tools from $name.',
+          'tools': [
+            {'name': 'echo', 'description': 'Says text back', 'status': 'unknown', 'schema': {'type': 'object'}},
+            {'name': 'search', 'description': 'Web search', 'status': 'unknown', 'schema': {'type': 'object'}},
+          ],
+        };
+      }
+    } else if (op == 'test_tool') {
+      final name = body['name'] as String;
+      final tool = body['tool'] as String;
+      final idx = servers.indexWhere((s) => s['name'] == name);
+      if (idx >= 0) {
+        final existingTools = List<Json>.from(servers[idx]['tools'] as List? ?? []);
+        final toolIdx = existingTools.indexWhere((t) => t['name'] == tool);
+        if (tool == 'search') {
+          final toolData = {
+            if (toolIdx >= 0) ...existingTools[toolIdx],
+            'name': tool,
+            'status': 'rate_limited',
+            'retry_available_in': '5:52',
+            'retry_after_seconds': 352,
+            'last_result': {
+              'plain_language': '$name is connected, but $tool is temporarily rate-limited. Retry available in 5:52.',
+              'technical_detail': 'HTTP 429 Too Many Requests: Rate limit exceeded. Retry-After: 352 (apiKey=tvly-[REDACTED])',
+            },
+          };
+          if (toolIdx >= 0) existingTools[toolIdx] = toolData; else existingTools.add(toolData);
+          servers[idx] = {
+            ...servers[idx],
+            'connection_status': 'connected',
+            'status': 'connected',
+            'plain_language': '$name is connected, but $tool is temporarily rate-limited. Retry available in 5:52.',
+            'technical_detail': 'HTTP 429 Too Many Requests: Rate limit exceeded. Retry-After: 352 (apiKey=tvly-[REDACTED])',
+            'tools': existingTools,
+          };
+        } else {
+          final toolData = {
+            if (toolIdx >= 0) ...existingTools[toolIdx],
+            'name': tool,
+            'status': 'available',
+            'last_result': {
+              'plain_language': '$tool ran successfully.',
+              'technical_detail': 'Result: {"output": "ok"}',
+            },
+          };
+          if (toolIdx >= 0) existingTools[toolIdx] = toolData; else existingTools.add(toolData);
+          servers[idx] = {
+            ...servers[idx],
+            'tools': existingTools,
+          };
+        }
+      }
+    } else if (op == 'remove_server') {
+      final name = body['name'] as String;
+      servers.removeWhere((s) => s['name'] == name);
+    } else if (op == 'add_server') {
+      final creds = <String, dynamic>{};
+      if (body['credentials'] != null) {
+        for (final k in (body['credentials'] as Json).keys) {
+          creds[k] = {'ref': 'cred:mcp:${body['name']}:$k', 'configured': true, 'masked': '••••••••'};
+        }
+      }
+      servers.add({
+        'name': body['name'],
+        'command': '${body['command']} ${(body['args'] as List? ?? []).join(' ')}'.trim(),
+        'connection_status': 'configured',
+        'status': 'configured',
+        'plain_language': 'Configured (not tested yet).',
+        'credentials': creds,
+      });
+    } else if (op == 'add_credential') {
+      final name = body['name'] as String;
+      final key = body['key'] as String;
+      final idx = servers.indexWhere((s) => s['name'] == name);
+      if (idx >= 0) {
+        final creds = Map<String, dynamic>.from(servers[idx]['credentials'] as Json? ?? {});
+        creds[key] = {'ref': 'cred:mcp:$name:$key', 'configured': true, 'masked': '••••••••'};
+        servers[idx] = {...servers[idx], 'credentials': creds};
+      }
+    } else if (op == 'remove_credential') {
+      final name = body['name'] as String;
+      final key = body['key'] as String;
+      final idx = servers.indexWhere((s) => s['name'] == name);
+      if (idx >= 0) {
+        final creds = Map<String, dynamic>.from(servers[idx]['credentials'] as Json? ?? {});
+        creds.remove(key);
+        servers[idx] = {...servers[idx], 'credentials': creds};
+      }
+    } else if (op == 'migrate_credentials') {
+      final name = body['name'] as String;
+      final idx = servers.indexWhere((s) => s['name'] == name);
+      if (idx >= 0) {
+        final legacy = servers[idx]['legacy_migration'] as Json?;
+        final creds = Map<String, dynamic>.from(servers[idx]['credentials'] as Json? ?? {});
+        if (legacy != null) {
+          final detected = (legacy['detected'] as List? ?? []);
+          for (final d in detected) {
+            final k = d['key'] as String;
+            creds[k] = {'ref': 'cred:mcp:$name:$k', 'configured': true, 'masked': '••••••••'};
+          }
+        }
+        servers[idx] = {
+          ...servers[idx],
+          'credentials': creds,
+          'legacy_migration': null,
+          'command': 'npx -y @modelcontextprotocol/server-tavily',
+        };
+      }
+    }
+    ex['servers'] = servers;
+    appSettings = {...appSettings, 'extensions': ex};
+    return ex;
   }
 
   final modelSearches = <String>[];
@@ -270,7 +404,7 @@ Json settingsView({String fallback = 'qwen3:8b', Json? ollama}) => {
       {'name': 'Robo Arm style', 'description': 'The style measured from Robo Arm.mp4.', 'folder': '/skills/robo-arm-style', 'style': true},
     ],
     'servers': [
-      {'name': 'fusion360', 'command': 'python3 server.py'},
+      {'name': 'fusion360', 'command': 'python3 server.py', 'connection_status': 'configured', 'status': 'configured', 'plain_language': 'Configured (not tested yet).', 'tools': <Json>[]},
     ],
     'claude_skills': [
       {'name': 'cut-the-curve', 'description': 'Velocity-matched seams.', 'folder': '/claude/cut-the-curve'},

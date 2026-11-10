@@ -759,6 +759,82 @@ void main() {
       expect(find.text('Open a project first'), findsWidgets);
     });
 
+    testWidgets('claims show their sources and scenes, and a link a script change sent for review is checked with one press', (tester) async {
+      const url = 'https://www.raspberrypi.com/products/raspberry-pi-5/';
+      final board = {
+        'scenes': [
+          {'id': 'scn_1', 'title': 'Meet the Pi', 'narration_rev': 3, 'narration': 'The Pi 5 runs at 3 GHz.', 'on_screen': '', 'visual': ''},
+        ],
+        'claims': [
+          {
+            'id': 'clm_1', 'text': 'The Pi 5 runs at 2.4 GHz.', 'status': 'needs_review', 'verified_by': null, 'history': <Json>[],
+            'scenes': [{'scene_id': 'scn_1', 'title': 'Meet the Pi', 'current_rev': 3, 'reviewed_rev': 2, 'review_state': 'needs_review'}],
+            'evidence': [{'evidence_id': 'evd_1', 'excerpt': 'running at 2.4GHz', 'stance': 'supports', 'url': url, 'title': ''}],
+          },
+        ],
+        'evidence': [
+          {'id': 'evd_1', 'url': url, 'title': '', 'publisher': '', 'retrieved': 'Added by hand, not retrieved by the app', 'claims': ['clm_1']},
+        ],
+        'reviews': <Json>[],
+      };
+      final api = FakeApi()
+        ..chatState = chatView()
+        ..current = {...state_(withFootage: true, plans: [planEntry('pln_r001')], latest: 'pln_r001'), 'board': board};
+      final saved = api.current;
+      await launch(tester, api);
+      api.current = saved;
+      await tester.tap(find.text('Open').first);
+      await tester.pumpAndSettle();
+      await go(tester, 'Assistant');
+      await tester.ensureVisible(find.text('Claims and sources'));
+      await tester.pumpAndSettle();
+      expect(find.text('1 link needs review after a script change.'), findsOneWidget);
+      expect(find.text('Needs review'), findsOneWidget);
+      expect(find.text('In Meet the Pi: script changed (revision 3), needs review'), findsOneWidget);
+      // A source with no title shows its address: a title is never made up.
+      expect(find.textContaining('Supported by $url'), findsOneWidget);
+      expect(find.textContaining('Added by hand, not retrieved by the app'), findsOneWidget);
+      await tester.ensureVisible(find.text('Still right'));
+      await tester.tap(find.text('Still right'));
+      await tester.pumpAndSettle();
+      expect(api.actions.last.$1, 'board');
+      expect(api.actions.last.$2, {'op': 'review_link', 'scene_id': 'scn_1', 'claim_id': 'clm_1'});
+    });
+
+    testWidgets('a search waits for Allow with its exact arguments, and its results show where each came from', (tester) async {
+      const url = 'https://www.raspberrypi.com/products/raspberry-pi-5/';
+      final research = {
+        'servers_on': ['Tavily'],
+        'pending': {'id': 'call_1', 'kind': 'search', 'server': 'Tavily', 'tool': 'tavily_search', 'arguments': {'query': 'pi 5 clock speed', 'max_results': 5}},
+        'results': [
+          {'id': 'r1', 'url': url, 'title': '', 'snippet': 'quad-core Arm Cortex-A76 processor running at 2.4GHz', 'page': '', 'metadata': {'score': 0.91},
+           'found_by': 'mcp:Tavily/tavily_search', 'retrieved_at': '2026-11-10T18:00:00Z'},
+        ],
+        'notice': 'Found 1 page. Pick an excerpt to keep.',
+        'error': null,
+      };
+      final api = FakeApi()
+        ..chatState = chatView()
+        ..current = {...state_(withFootage: true, plans: [planEntry('pln_r001')], latest: 'pln_r001'), 'research': research};
+      final saved = api.current;
+      await launch(tester, api);
+      api.current = saved;
+      await tester.tap(find.text('Open').first);
+      await tester.pumpAndSettle();
+      await go(tester, 'Assistant');
+      await tester.ensureVisible(find.text('Run tavily_search on Tavily?'));
+      await tester.pumpAndSettle();
+      expect(find.text('Search the web'), findsOneWidget);
+      expect(find.textContaining('"query": "pi 5 clock speed"'), findsOneWidget);
+      expect(find.text(url), findsOneWidget, reason: 'a result keeps its own address, shown in full');
+      expect(find.text('score: 0.91'), findsOneWidget);
+      expect(find.text('quad-core Arm Cortex-A76 processor running at 2.4GHz'), findsOneWidget);
+      await tester.tap(find.widgetWithText(FilledButton, 'Allow'));
+      await tester.pumpAndSettle();
+      expect(api.actions.last.$1, 'research');
+      expect(api.actions.last.$2, {'op': 'run', 'call_id': 'call_1', 'allow': true});
+    });
+
     testWidgets('offers ideas in an empty conversation and sends one', (tester) async {
       final api = await opened(tester);
       await go(tester, 'Assistant');
@@ -1077,6 +1153,56 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Add a server').hitTestable(), findsOneWidget);
       await gesture.removePointer();
+    });
+
+    testWidgets('MCP connection diagnostics shows configured, test connection, discover tools, and approved test tool with rate-limiting', (tester) async {
+      final api = await opened(tester);
+      await go(tester, 'Settings');
+      expect(find.text('fusion360'), findsOneWidget);
+      expect(find.text('Configured'), findsOneWidget);
+      expect(find.text('Configured (not tested yet).'), findsOneWidget);
+
+      // 1. Action: Test connection
+      await tester.tap(find.text('Test connection').hitTestable());
+      await tester.pumpAndSettle();
+      expect(find.text('Connected'), findsOneWidget);
+      expect(find.text('fusion360 is connected.'), findsOneWidget);
+      expect(api.extensionChanges.any((c) => c['op'] == 'test_server' && c['name'] == 'fusion360'), isTrue);
+
+      // 2. Action: Discover tools
+      await tester.tap(find.text('Discover tools').hitTestable());
+      await tester.pumpAndSettle();
+      expect(find.text('Discovered tools (2)'), findsOneWidget);
+      expect(find.text('echo'), findsOneWidget);
+      expect(find.text('search'), findsOneWidget);
+
+      // 3. Technical details expansion
+      expect(find.text('Show technical details'), findsOneWidget);
+      await tester.tap(find.text('Show technical details').hitTestable());
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Protocol version 2025-06-18'), findsOneWidget);
+
+      // 4. Action: Run a user-approved test tool on search tool
+      final runButtons = find.text('Run test tool');
+      expect(runButtons, findsNWidgets(2));
+      await tester.tap(runButtons.at(1));
+      await tester.pumpAndSettle();
+
+      // Approval dialog is shown: requires user approval
+      expect(find.text('Run test tool: search'), findsOneWidget);
+      expect(find.textContaining('Approval required:'), findsOneWidget);
+
+      // Approve and run
+      await tester.tap(find.text('Allow and run'));
+      await tester.pumpAndSettle();
+
+      // Truthful status: server is still Connected, but search tool is Rate-limited with 5:52 retry
+      expect(find.text('Connected'), findsOneWidget);
+      expect(find.text('Rate-limited (5:52)'), findsOneWidget);
+      expect(find.textContaining('fusion360 is connected, but search is temporarily rate-limited. Retry available in 5:52.'), findsWidgets);
+
+      // Verify secrets redacted in technical details
+      expect(find.textContaining('tvly-[REDACTED]'), findsOneWidget);
     });
 
     testWidgets('a reference can come from a link', (tester) async {

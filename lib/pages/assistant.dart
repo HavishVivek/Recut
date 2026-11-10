@@ -11,6 +11,7 @@ import '../motion.dart';
 import '../project.dart';
 import '../theme.dart';
 import '../ui.dart';
+import 'claims.dart';
 import 'exchange.dart';
 import 'extensions.dart';
 import 'preview.dart';
@@ -422,6 +423,7 @@ class _AssistantPageState extends State<AssistantPage> {
               _modelPanel(),
               EditBriefPanel(model: model),
               ProjectExtensions(model: model),
+              ClaimsPanel(model: model),
               PartPhotos(model),
               _memoryPanel(),
               _limits(),
