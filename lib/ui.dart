@@ -358,3 +358,57 @@ String endOfPath(String path) {
 
 Color colourFrom(String hex) =>
     Color(int.parse(hex.substring(1), radix: 16) + 0xFF000000);
+
+/// Whether frames show where Shorts, Reels and TikTok draw over a video. One switch for every page.
+final safeZones = ValueNotifier<bool>(false);
+
+/// Shades where an upright video's platform buttons and captions sit: the right-hand column of buttons, the
+/// description across the foot, and the tabs at the top. Shares of the frame, from those apps' own layouts.
+class SafeZones extends StatelessWidget {
+  const SafeZones({super.key});
+
+  // left, top, right, bottom, as shares of the frame.
+  static const zones = [(0.86, 0.38, 1.0, 0.86), (0.0, 0.86, 1.0, 1.0), (0.0, 0.0, 1.0, 0.07)];
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      child: ValueListenableBuilder<bool>(
+        valueListenable: safeZones,
+        builder: (context, on, _) => !on
+            ? const SizedBox.shrink()
+            : LayoutBuilder(
+                builder: (context, room) => Stack(
+                  children: [
+                    for (final (left, top, right, bottom) in zones)
+                      Positioned(
+                        left: room.maxWidth * left,
+                        top: room.maxHeight * top,
+                        width: room.maxWidth * (right - left),
+                        height: room.maxHeight * (bottom - top),
+                        child: Container(
+                          key: const ValueKey('safe-zone'),
+                          decoration: BoxDecoration(
+                            color: Graphite.coral.withValues(alpha: .28),
+                            border: Border.all(color: Graphite.coral.withValues(alpha: .6)),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+      ),
+    );
+  }
+}
+
+/// The app's own icon, cropped to its shape, as the side bar and the welcome show it.
+class AppMark extends StatelessWidget {
+  const AppMark({super.key, this.size = 26});
+
+  final double size;
+
+  @override
+  Widget build(BuildContext context) =>
+      Image.asset('assets/brand/mark.png', width: size, height: size, filterQuality: FilterQuality.medium, semanticLabel: 'AI Editor');
+}

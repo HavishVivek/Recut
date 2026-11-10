@@ -60,11 +60,12 @@ class ModelPicker extends StatelessWidget {
 }
 
 class AssistantPage extends StatefulWidget {
-  const AssistantPage({super.key, required this.model, required this.onShowSettings, required this.onShowReview});
+  const AssistantPage({super.key, required this.model, required this.onShowSettings, required this.onShowReview, this.enablePreview = false});
 
   final ProjectModel model;
   final VoidCallback onShowSettings;
   final VoidCallback onShowReview;
+  final bool enablePreview;
 
   @override
   State<AssistantPage> createState() => _AssistantPageState();
@@ -227,6 +228,14 @@ class _AssistantPageState extends State<AssistantPage> {
               onAllow: item['waiting_tool'] == true && !model.busy ? (allow) => model.resolveTool(allow) : null,
             ),
           ),
+        for (final item in saved)
+          if ((item['video'] as Json?)?['path'] != null && item == saved.lastWhere((other) => (other['video'] as Json?)?['path'] != null, orElse: () => const {}))
+            MadeVideo(
+              key: ValueKey(('made', item['id'])),
+              video: item['video'] as Json,
+              enablePreview: widget.enablePreview,
+              onChangeScene: (number) => _write('change scene $number to '),
+            ),
         if (asking != null) ...[
           Arrive(
             key: ValueKey(('asking', asking)),
@@ -373,7 +382,7 @@ class _AssistantPageState extends State<AssistantPage> {
       'What it can do',
       children: [
         const Text(
-          'Ask it to add text, cut or restore lines, change the title, turn captions on or off, make a short, add music or b-roll, or find a reference. It can also make a new animated video from your words, wide or upright for Shorts, with 3D scenes of a servo, Arduino, OLED or breadboard. It shows the scenes as a draft first, so you can change them before it renders. New videos have no voice yet. Each change is a new revision, so nothing is lost, and nothing reaches Resolve until you approve it. It knows nothing about your other projects and never sees file paths.',
+          'Ask it to add text, cut or restore lines, change the title, turn captions on or off, make a short, add music or b-roll, or find a reference. It can also make a new animated video from your words, wide or upright for Shorts, with 3D scenes of a servo, Arduino, OLED or breadboard. It shows the scenes as a draft first, so you can change them before it renders. New videos have no voiceover. Each change is a new revision, so nothing is lost, and nothing reaches Resolve until you approve it. It knows nothing about your other projects and never sees file paths.',
           style: tiny,
         ),
         if (hasMessages) ...[
@@ -625,6 +634,14 @@ class _DraftChoices extends StatelessWidget {
           children: [
             const Text('Storyboard', style: quiet),
             const SizedBox(width: 8),
+            if (upright && drawn > 0)
+              ValueListenableBuilder<bool>(
+                valueListenable: safeZones,
+                builder: (context, on, _) => TextButton(
+                  onPressed: () => safeZones.value = !on,
+                  child: Text(on ? 'Hide safe zones' : 'Show safe zones'),
+                ),
+              ),
             if (drawn < stills.length)
               TextButton(
                 onPressed: busy ? null : model.drawStoryboard,
@@ -635,47 +652,71 @@ class _DraftChoices extends StatelessWidget {
         if (drawn == 0)
           const Text('One still of each scene, drawn half size. Nothing is made until you say make it.', style: tiny)
         else
+          // A timeline: drag a still to move its scene, and its menu makes it longer or shorter. Each sends the words
+          // the draft already understands, so a model never edits it.
           SizedBox(
-            height: size.height + 22,
-            child: ListView.separated(
+            height: size.height + 40,
+            child: ReorderableListView.builder(
               scrollDirection: Axis.horizontal,
+              buildDefaultDragHandles: false,
               itemCount: stills.length,
-              separatorBuilder: (_, _) => const SizedBox(width: 8),
+              onReorder: (from, to) {
+                final place = to > from ? to - 1 : to;
+                if (place != from && !busy) onSend('move scene ${from + 1} to place ${place + 1}');
+              },
               itemBuilder: (context, index) {
                 final item = stills[index];
                 final number = item['scene'] as int;
                 final path = item['path'] as String?;
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    PopupMenuButton<String>(
-                      tooltip: 'Scene $number',
-                      enabled: !busy,
-                      onSelected: (choice) => choice == 'words' ? onWrite('change scene $number to ') : onSend(choice),
-                      itemBuilder: (_) => [
-                        const PopupMenuItem(value: 'words', child: Text('Change the words…')),
-                        if (number > 1) PopupMenuItem(value: 'move scene $number before scene ${number - 1}', child: const Text('Move earlier')),
-                        if (number < stills.length) PopupMenuItem(value: 'move scene $number after scene ${number + 1}', child: const Text('Move later')),
-                        PopupMenuItem(value: 'no picture in scene $number', child: const Text('No picture')),
-                        PopupMenuItem(value: 'remove scene $number', child: const Text('Remove')),
-                      ],
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(smallCorner),
-                        child: Container(
-                          width: size.width,
-                          height: size.height,
-                          color: Graphite.raised,
-                          alignment: Alignment.center,
-                          child: path == null
-                              ? const Text('Changed', style: tiny)
-                              : Image.file(File(path), width: size.width, height: size.height, fit: BoxFit.cover,
-                                  errorBuilder: (_, _, _) => const SizedBox.shrink()),
+                final seconds = item['seconds'] as num?;
+                return ReorderableDragStartListener(
+                  key: ValueKey(('still', number)),
+                  index: index,
+                  enabled: !busy,
+                  child: Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        PopupMenuButton<String>(
+                          tooltip: 'Scene $number',
+                          enabled: !busy,
+                          onSelected: (choice) => choice == 'words' ? onWrite('change scene $number to ') : onSend(choice),
+                          itemBuilder: (_) => [
+                            const PopupMenuItem(value: 'words', child: Text('Change the words…')),
+                            PopupMenuItem(value: 'make scene $number longer', child: const Text('Longer')),
+                            PopupMenuItem(value: 'make scene $number shorter', child: const Text('Shorter')),
+                            if (number > 1) PopupMenuItem(value: 'move scene $number before scene ${number - 1}', child: const Text('Move earlier')),
+                            if (number < stills.length) PopupMenuItem(value: 'move scene $number after scene ${number + 1}', child: const Text('Move later')),
+                            PopupMenuItem(value: 'no picture in scene $number', child: const Text('No picture')),
+                            PopupMenuItem(value: 'remove scene $number', child: const Text('Remove')),
+                          ],
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(smallCorner),
+                            child: Container(
+                              width: size.width,
+                              height: size.height,
+                              color: Graphite.raised,
+                              alignment: Alignment.center,
+                              child: Stack(
+                                fit: StackFit.expand,
+                                children: [
+                                  if (path == null)
+                                    const Center(child: Text('Changed', style: tiny))
+                                  else
+                                    Image.file(File(path), width: size.width, height: size.height, fit: BoxFit.cover,
+                                        errorBuilder: (_, _, _) => const SizedBox.shrink()),
+                                  if (upright) const SafeZones(),
+                                ],
+                              ),
+                            ),
+                          ),
                         ),
-                      ),
+                        const SizedBox(height: 4),
+                        Text(seconds == null ? '$number' : '$number · ${seconds.toStringAsFixed(1)} s', style: mono),
+                      ],
                     ),
-                    const SizedBox(height: 4),
-                    Text('$number', style: mono),
-                  ],
+                  ),
                 );
               },
             ),
@@ -793,6 +834,131 @@ class _DraftChoices extends StatelessWidget {
               ],
             ),
           ],
+        ],
+      ),
+    );
+  }
+}
+
+
+/// The latest made video, playing in the conversation, with a bar of its scenes under it. A scene is a tap away, and
+/// "Change this scene" starts the words for the scene under the playhead, which the draft understands.
+class MadeVideo extends StatefulWidget {
+  const MadeVideo({super.key, required this.video, required this.onChangeScene, this.enablePreview = false});
+
+  final Json video;
+  final void Function(int number) onChangeScene;
+  final bool enablePreview;
+
+  @override
+  State<MadeVideo> createState() => _MadeVideoState();
+}
+
+class _MadeVideoState extends State<MadeVideo> {
+  Screen? _screen;
+  bool _playing = false;
+  Duration _at = Duration.zero;
+
+  List<Json> get _scenes => ((widget.video['scenes'] as List?) ?? const []).cast<Json>();
+
+  @override
+  void dispose() {
+    _screen?.dispose();
+    super.dispose();
+  }
+
+  /// A player only starts when a person presses play, so a long conversation doesn't hold one for every video.
+  Future<void> _start() async {
+    _screen ??= Screen(widget.enablePreview)..position.addListener(_moved);
+    await _screen!.show(widget.video['path'] as String);
+    if (_playing) {
+      await _screen!.player?.pause();
+    } else {
+      await _screen!.player?.play();
+    }
+    if (mounted) setState(() => _playing = !_playing);
+  }
+
+  void _moved() {
+    if (mounted) setState(() => _at = _screen!.position.value);
+  }
+
+  int get _current {
+    final seconds = _at.inMilliseconds / 1000;
+    final scenes = _scenes;
+    for (var index = scenes.length - 1; index >= 0; index--) {
+      if (seconds >= (scenes[index]['start'] as num)) return scenes[index]['number'] as int;
+    }
+    return scenes.isEmpty ? 1 : scenes.first['number'] as int;
+  }
+
+  Future<void> _jump(Json scene) async {
+    _screen ??= Screen(widget.enablePreview)..position.addListener(_moved);
+    await _screen!.show(widget.video['path'] as String);
+    _screen!.seek(Duration(milliseconds: ((scene['start'] as num) * 1000).round()));
+    setState(() => _at = Duration(milliseconds: ((scene['start'] as num) * 1000).round()));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scenes = _scenes;
+    final current = _current;
+    return Padding(
+      padding: const EdgeInsets.only(top: 4, bottom: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (_screen != null)
+            SizedBox(
+              height: 280,
+              child: Stack(
+                children: [
+                  Positioned.fill(child: ScreenView(_screen!, placeholder: _screen!.available ? null : const Text('Preview unavailable', style: quiet))),
+                  // Upright videos show the platforms' zones over the picture, at the picture's own width.
+                  if ((widget.video['upright'] as bool?) == true)
+                    const Center(child: AspectRatio(aspectRatio: 9 / 16, child: SafeZones())),
+                ],
+              ),
+            ),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              IconButton(
+                tooltip: _playing ? 'Pause' : 'Play the video',
+                onPressed: _start,
+                icon: PhosphorIcon(_playing ? PhosphorIconsFill.pause : PhosphorIconsFill.play, size: 16, color: Graphite.text),
+              ),
+              Expanded(
+                child: Row(
+                  children: [
+                    for (final scene in scenes)
+                      Expanded(
+                        flex: (((scene['end'] as num) - (scene['start'] as num)) * 100).round().clamp(1, 1 << 20),
+                        child: Tooltip(
+                          message: 'Scene ${scene['number']}: ${scene['text']}',
+                          child: InkWell(
+                            onTap: () => _jump(scene),
+                            child: Container(
+                              height: 22,
+                              margin: const EdgeInsets.symmetric(horizontal: 1),
+                              alignment: Alignment.center,
+                              decoration: BoxDecoration(
+                                color: scene['number'] == current ? Graphite.mint.withValues(alpha: .22) : Graphite.raised,
+                                borderRadius: BorderRadius.circular(4),
+                                border: Border.all(color: scene['number'] == current ? Graphite.mint : Graphite.line),
+                              ),
+                              child: Text('${scene['number']}', style: mono),
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          if (scenes.isNotEmpty)
+            TextButton(onPressed: () => widget.onChangeScene(current), child: Text('Change scene $current')),
         ],
       ),
     );

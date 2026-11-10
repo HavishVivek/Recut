@@ -91,7 +91,7 @@ class _LicenseSettingsState extends State<LicenseSettings> {
         ],
         if (_problem != null) Padding(padding: const EdgeInsets.only(top: 8), child: Alert(_problem!, color: bad)),
         const SizedBox(height: 8),
-        const Text('The key is checked on this Mac. There\'s no account, and nothing is sent anywhere.', style: tiny),
+        const Text('The key is checked on this Mac, and nothing is sent anywhere. A Pro account, under Account, unlocks the same.', style: tiny),
       ],
     );
   }

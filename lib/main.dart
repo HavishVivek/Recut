@@ -13,6 +13,8 @@ import 'pages/activity.dart';
 import 'pages/assistant.dart';
 import 'pages/setup.dart';
 import 'pages/footage.dart';
+import 'pages/account.dart';
+import 'pages/gallery.dart';
 import 'pages/projects.dart';
 import 'pages/resolve.dart';
 import 'pages/review.dart';
@@ -20,6 +22,7 @@ import 'pages/settings.dart';
 import 'pages/style.dart';
 import 'project.dart';
 import 'theme.dart';
+import 'tour.dart';
 import 'ui.dart';
 
 void main() {
@@ -80,6 +83,7 @@ class _ShellState extends State<Shell> {
     ('Review', PhosphorIconsRegular.playCircle, PhosphorIconsFill.playCircle),
     ('Resolve', PhosphorIconsRegular.stack, PhosphorIconsFill.stack),
     ('Assistant', PhosphorIconsRegular.sparkle, PhosphorIconsFill.sparkle),
+    ('Make', PhosphorIconsRegular.magicWand, PhosphorIconsFill.magicWand),
     ('Activity', PhosphorIconsRegular.clockCounterClockwise, PhosphorIconsFill.clockCounterClockwise),
     ('Setup', PhosphorIconsRegular.plugsConnected, PhosphorIconsFill.plugsConnected),
     ('Settings', PhosphorIconsRegular.gearSix, PhosphorIconsFill.gearSix),
@@ -88,10 +92,14 @@ class _ShellState extends State<Shell> {
   static const _review = 3;
   static const _resolve = 4;
   static const _assistant = 5;
-  static const _setup = 7;
-  static const _settings = 8;
+  static const _make = 6;
+  static const _setup = 8;
+  static const _settings = 9;
 
   int _index = 0;
+  // The side bar's entries, so the guided tour can light the one it's about.
+  final _navKeys = List.generate(_sections.length, (_) => GlobalKey());
+  bool _touring = false;
   Engine? _engine;
   ProjectModel? _model;
   String? _engineError;
@@ -102,7 +110,7 @@ class _ShellState extends State<Shell> {
     Drops.instance.onDropped = _dropped;
     if (widget.api != null) {
       _model = ProjectModel(widget.api!, pollEvery: Duration.zero);
-      _openSetupIfNeeded(widget.api!);
+      _openSetupIfNeeded(widget.api!).then((_) => _welcomeIfNew());
     } else if (widget.enablePreview) {
       _connect();
     }
@@ -117,6 +125,7 @@ class _ShellState extends State<Shell> {
           _model = ProjectModel(engine);
         });
         await _openSetupIfNeeded(engine);
+        await _welcomeIfNew();
       }
     } catch (error) {
       if (mounted) setState(() => _engineError = '$error');
@@ -148,7 +157,9 @@ class _ShellState extends State<Shell> {
     // Said after the photos are in, because starting a job clears what's shown.
     if (sorted.other.isNotEmpty) {
       final names = sorted.other.map((path) => path.split('/').last).join(', ');
-      model.complain('$names ${sorted.other.length == 1 ? "isn't" : "aren't"} a photo, 3D model or video, so ${sorted.photos.isEmpty ? 'nothing was' : 'it wasn\'t'} added.');
+      model.complain(
+        '$names ${sorted.other.length == 1 ? "isn't" : "aren't"} a photo, 3D model, sketch or video, so ${sorted.photos.isEmpty ? 'nothing was' : 'it wasn\'t'} added.',
+      );
     }
     if (sorted.videos.isEmpty || !mounted) return;
     final video = sorted.videos.first;
@@ -156,7 +167,10 @@ class _ShellState extends State<Shell> {
       context: context,
       builder: (context) => AlertDialog(
         title: Text(video.split('/').last, overflow: TextOverflow.ellipsis),
-        content: const Text('What is this video for? A clip is edited. A reference lends its colours, title place and pace, and is never copied.', style: quiet),
+        content: const Text(
+          'What is this video for? A clip is edited. A reference lends its colours, title place and pace, and is never copied.',
+          style: quiet,
+        ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
           TextButton(onPressed: () => Navigator.pop(context, 'reference'), child: const Text('Use as the reference')),
@@ -190,6 +204,35 @@ class _ShellState extends State<Shell> {
     }
   }
 
+  /// A Mac that hasn't seen the welcome gets it once, then the tour if they want it. A signed-in account's plan is
+  /// checked again in the background, and being offline changes nothing.
+  Future<void> _welcomeIfNew() async {
+    final model = _model;
+    if (model == null || !mounted) return;
+    model.api.account('refresh').then((_) => model.loadSettings(), onError: (_) {});
+    await model.loadSettings();
+    if (!mounted || model.settings == null || model.settings!['onboarded'] == true) return;
+    final choice = await showWelcome(context, model);
+    if (!mounted) return;
+    if (choice == WelcomeChoice.tour) {
+      setState(() => _touring = true);
+    } else {
+      await _finishTour();
+    }
+  }
+
+  Future<void> _finishTour() async {
+    final model = _model;
+    if (mounted) setState(() => _touring = false);
+    if (model == null) return;
+    try {
+      await model.api.setOnboarded(true);
+      await model.loadSettings();
+    } catch (_) {
+      // Seeing the welcome again next time is the worst that can happen.
+    }
+  }
+
   /// The side bar can fold to its icons, for more room to work.
   bool _collapsed = false;
 
@@ -213,12 +256,17 @@ class _ShellState extends State<Shell> {
         arrival: _arrivals[index],
         openedAt: _openedAt[index],
         child: AnimatedSlide(
-        offset: active || reduced ? Offset.zero : const Offset(0, .012),
-        duration: Motion.settle,
-        curve: Motion.curve,
-        // The page leaving goes quickly, before the new one's sections start, so the two never overlap.
-        child: AnimatedOpacity(opacity: active ? 1 : 0, duration: active ? Motion.settle : EnterOnPage.lead, curve: Motion.curve, child: child),
-      ),
+          offset: active || reduced ? Offset.zero : const Offset(0, .012),
+          duration: Motion.settle,
+          curve: Motion.curve,
+          // The page leaving goes quickly, before the new one's sections start, so the two never overlap.
+          child: AnimatedOpacity(
+            opacity: active ? 1 : 0,
+            duration: active ? Motion.settle : EnterOnPage.lead,
+            curve: Motion.curve,
+            child: child,
+          ),
+        ),
       ),
     );
   }
@@ -229,9 +277,18 @@ class _ShellState extends State<Shell> {
     _page(2, StylePage(model: model)),
     _page(3, ReviewPage(model: model, enablePreview: widget.enablePreview, onShowResolve: () => _go(_resolve))),
     _page(4, ResolvePage(model: model, visible: _index == _resolve)),
-    _page(5, AssistantPage(model: model, onShowSettings: () => _go(_settings), onShowReview: () => _go(_review))),
     _page(
-      6,
+      5,
+      AssistantPage(
+        model: model,
+        onShowSettings: () => _go(_settings),
+        onShowReview: () => _go(_review),
+        enablePreview: widget.enablePreview,
+      ),
+    ),
+    _page(_make, GalleryPage(model: model, visible: _index == _make, enablePreview: widget.enablePreview)),
+    _page(
+      7,
       ActivityPage(
         model: model,
         onShowPlan: (id) async {
@@ -240,8 +297,16 @@ class _ShellState extends State<Shell> {
         },
       ),
     ),
-    _page(7, SetupPage(api: model.api)),
-    _page(8, SettingsPage(model: model, visible: _index == _settings, section: _settingsSection)),
+    _page(_setup, SetupPage(api: model.api)),
+    _page(
+      _settings,
+      SettingsPage(
+        model: model,
+        visible: _index == _settings,
+        section: _settingsSection,
+        onStartTour: () => setState(() => _touring = true),
+      ),
+    ),
   ];
 
   @override
@@ -255,9 +320,11 @@ class _ShellState extends State<Shell> {
               ? _layout(context, null, _EngineNotice(error: _engineError), const SizedBox.shrink())
               : AnimatedBuilder(
                   animation: model,
-                  builder: (context, _) => _layout(context, model, _StatusBar(model: model), Stack(fit: StackFit.expand, children: _pages(model))),
+                  builder: (context, _) =>
+                      _layout(context, model, _StatusBar(model: model), Stack(fit: StackFit.expand, children: _pages(model))),
                 ),
           const _DropOutline(),
+          if (_touring && model != null) GuidedTour(steps: tourSteps, targets: _navKeys, onPage: _go, onDone: _finishTour),
         ],
       ),
     );
@@ -303,15 +370,29 @@ class _ShellState extends State<Shell> {
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(8, 6, 8, 16),
-            child: _collapsed
-                ? const SizedBox(height: 20)
-                : Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('AI Editor', style: Theme.of(context).textTheme.titleMedium, maxLines: 1, overflow: TextOverflow.clip),
-                      if (stem != null) ...[const SizedBox(height: 2), Text(stem, style: mono, maxLines: 1, overflow: TextOverflow.ellipsis)],
-                    ],
-                  ),
+            // While the side bar folds or opens, it's too narrow for the name part of the way, so only the mark shows.
+            child: LayoutBuilder(
+              builder: (context, box) => _collapsed || box.maxWidth < 120
+                  ? const Align(alignment: Alignment.centerLeft, child: AppMark(size: 22))
+                  : Row(
+                      children: [
+                        const AppMark(size: 26),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('AI Editor', style: Theme.of(context).textTheme.titleMedium, maxLines: 1, overflow: TextOverflow.clip),
+                              if (stem != null) ...[
+                                const SizedBox(height: 2),
+                                Text(stem, style: mono, maxLines: 1, overflow: TextOverflow.ellipsis),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+            ),
           ),
           // One background for the page that's open. It slides to a new page rather than jumping,
           // so the eye follows where it went.
@@ -324,7 +405,9 @@ class _ShellState extends State<Shell> {
                 left: 0,
                 right: 0,
                 height: _NavItem.height,
-                child: DecoratedBox(decoration: BoxDecoration(borderRadius: BorderRadius.circular(smallCorner), color: Graphite.raised)),
+                child: DecoratedBox(
+                  decoration: BoxDecoration(borderRadius: BorderRadius.circular(smallCorner), color: Graphite.raised),
+                ),
               ),
               Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -332,6 +415,7 @@ class _ShellState extends State<Shell> {
                   for (final (i, section) in _sections.indexed)
                     if (i == _settings)
                       _SettingsNavItem(
+                        key: _navKeys[i],
                         item: _NavItem(
                           label: section.$1,
                           icon: i == _index ? section.$3 : section.$2,
@@ -348,13 +432,23 @@ class _ShellState extends State<Shell> {
                           ('servers', 'MCP servers'),
                           ('license', 'License'),
                           ('account', 'Account'),
+                          ('mac', 'This Mac'),
                           ('ollama', 'Ollama'),
                           ('about', 'About'),
                         ],
                         onPick: _openSettings,
                       )
                     else
-                      _NavItem(label: section.$1, icon: i == _index ? section.$3 : section.$2, selected: i == _index, collapsed: _collapsed, onTap: () => _go(i)),
+                      KeyedSubtree(
+                        key: _navKeys[i],
+                        child: _NavItem(
+                          label: section.$1,
+                          icon: i == _index ? section.$3 : section.$2,
+                          selected: i == _index,
+                          collapsed: _collapsed,
+                          onTap: () => _go(i),
+                        ),
+                      ),
                 ],
               ),
             ],
@@ -375,7 +469,14 @@ class _ShellState extends State<Shell> {
 }
 
 class _NavItem extends StatefulWidget {
-  const _NavItem({required this.label, required this.icon, required this.selected, required this.onTap, this.collapsed = false, this.tooltip});
+  const _NavItem({
+    required this.label,
+    required this.icon,
+    required this.selected,
+    required this.onTap,
+    this.collapsed = false,
+    this.tooltip,
+  });
 
   final String label;
   final PhosphorIconData icon;
@@ -428,7 +529,10 @@ class _NavItemState extends State<_NavItem> {
             margin: const EdgeInsets.only(bottom: _NavItem.stride - _NavItem.height),
             padding: const EdgeInsets.symmetric(horizontal: 10),
             // The open page's background is drawn once behind the list, so it can slide. Hover only lights the others.
-            decoration: BoxDecoration(borderRadius: BorderRadius.circular(smallCorner), color: _over && !selected ? Graphite.hover : Colors.transparent),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(smallCorner),
+              color: _over && !selected ? Graphite.hover : Colors.transparent,
+            ),
             child: Row(
               mainAxisAlignment: collapsed ? MainAxisAlignment.center : MainAxisAlignment.start,
               children: [
@@ -436,7 +540,15 @@ class _NavItemState extends State<_NavItem> {
                   scale: _over && !selected && !Motion.reduced(context) ? 1.08 : 1,
                   duration: Motion.quick,
                   curve: Motion.curve,
-                  child: PhosphorIcon(icon, size: 17, color: selected ? Graphite.mint : _over ? Graphite.text : Graphite.muted),
+                  child: PhosphorIcon(
+                    icon,
+                    size: 17,
+                    color: selected
+                        ? Graphite.mint
+                        : _over
+                        ? Graphite.text
+                        : Graphite.muted,
+                  ),
                 ),
                 if (!collapsed) ...[
                   const SizedBox(width: 10),
@@ -462,7 +574,7 @@ class _NavItemState extends State<_NavItem> {
 
 /// Settings, with a menu of its sections that opens while the pointer rests on it.
 class _SettingsNavItem extends StatefulWidget {
-  const _SettingsNavItem({required this.item, required this.sections, required this.onPick});
+  const _SettingsNavItem({super.key, required this.item, required this.sections, required this.onPick});
 
   final _NavItem item;
   final List<(String, String)> sections;
@@ -594,7 +706,12 @@ class _StatusBar extends StatelessWidget {
           Expanded(
             child: SelectableText(problem, style: const TextStyle(fontSize: 12, color: bad), maxLines: 2),
           ),
-          IconButton(iconSize: 15, tooltip: 'Dismiss', onPressed: model.dismissProblem, icon: const PhosphorIcon(PhosphorIconsRegular.x, size: 14)),
+          IconButton(
+            iconSize: 15,
+            tooltip: 'Dismiss',
+            onPressed: model.dismissProblem,
+            icon: const PhosphorIcon(PhosphorIconsRegular.x, size: 14),
+          ),
         ],
       );
     }
@@ -613,7 +730,12 @@ class _StatusBar extends StatelessWidget {
     return Row(
       key: const ValueKey('ready'),
       children: [
-        Expanded(child: Text(model.isOpen ? 'Ready. Nothing reaches Resolve until you approve it.' : 'Ready. Open or make a project to start.', style: tiny)),
+        Expanded(
+          child: Text(
+            model.isOpen ? 'Ready. Nothing reaches Resolve until you approve it.' : 'Ready. Open or make a project to start.',
+            style: tiny,
+          ),
+        ),
       ],
     );
   }
@@ -628,7 +750,6 @@ class _StatusBar extends StatelessWidget {
     );
   }
 }
-
 
 /// A mint outline while files are over the window, so a person knows letting go adds them.
 class _DropOutline extends StatelessWidget {
@@ -651,7 +772,7 @@ class _DropOutline extends StatelessWidget {
               border: Border.all(color: Graphite.mint, width: 2),
             ),
             alignment: Alignment.center,
-            child: const Text('Drop photos, 3D models or a video', style: TextStyle(fontSize: 18, color: Graphite.text)),
+            child: const Text('Drop photos, 3D models, sketches or a video', style: TextStyle(fontSize: 18, color: Graphite.text)),
           ),
         ),
       ),

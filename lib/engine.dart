@@ -66,9 +66,12 @@ abstract class Api {
   Future<Json> modelDownload();
   Future<Json> cancelModelDownload();
   Future<Json> addLicense(String key);
+  Future<Json> changeBrand(Json body);
   Future<Json> setup();
   Future<Json> setupAction(String action, [Json body = const {}]);
   Future<Json> removeLicense();
+  Future<Json> account(String op, [Json body = const {}]);
+  Future<Json> setOnboarded(bool done);
   Future<Json> chat();
   Future<void> stopReply();
 }
@@ -192,6 +195,9 @@ class Engine implements Api {
   Future<Json> addLicense(String key) => _call('POST', '/license', {'key': key});
 
   @override
+  Future<Json> changeBrand(Json body) => _call('POST', '/brand', body);
+
+  @override
   Future<Json> setup() => _call('GET', '/setup');
 
   @override
@@ -199,6 +205,12 @@ class Engine implements Api {
 
   @override
   Future<Json> removeLicense() => _call('POST', '/license/remove', {});
+
+  @override
+  Future<Json> account(String op, [Json body = const {}]) => _call('POST', '/account/$op', body);
+
+  @override
+  Future<Json> setOnboarded(bool done) => _call('POST', '/onboarded', {'done': done});
 
   @override
   Future<Json> chat() => _call('GET', '/project/chat');

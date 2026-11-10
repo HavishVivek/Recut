@@ -7,15 +7,20 @@ import '../project.dart';
 import '../theme.dart';
 import '../ui.dart';
 import 'assistant.dart';
+import 'account.dart';
+import 'brand.dart';
 import 'extensions.dart';
 import 'hugging_face.dart';
 import 'license.dart';
 
 class SettingsPage extends StatefulWidget {
-  const SettingsPage({super.key, required this.model, required this.visible, this.section});
+  const SettingsPage({super.key, required this.model, required this.visible, this.section, this.onStartTour});
 
   final ProjectModel model;
   final bool visible;
+
+  /// Takes the guided tour again, from the Account section.
+  final VoidCallback? onStartTour;
 
   /// A section chosen from the side bar's menu, to scroll to.
   final ValueListenable<String?>? section;
@@ -26,7 +31,7 @@ class SettingsPage extends StatefulWidget {
 
 class _SettingsPageState extends State<SettingsPage> {
   final _places = {
-    for (final id in ['models', 'huggingface', 'project', 'styles', 'skills', 'servers', 'license', 'account', 'ollama', 'about']) id: GlobalKey(),
+    for (final id in ['models', 'huggingface', 'project', 'styles', 'skills', 'servers', 'brand', 'license', 'account', 'mac', 'ollama', 'about']) id: GlobalKey(),
   };
 
   /// Models listed when the page first had any. One that arrives later, from a download, moves in.
@@ -134,18 +139,14 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Widget _account(Json settings) {
-    final user = settings['user'] as Json;
     final ollama = settings['ollama'] as Json;
     final account = ollama['account'] as Json?;
     return Section(
-      'Account',
+      'This Mac',
       children: [
-        Fact('Name', user['name'] as String),
-        Fact('Mac user', user['user'] as String, exact: true),
-        const Fact('Plan', 'Local. No sign-in, subscription or API key'),
         Fact('Approvals made as', reviewer),
         Fact('Ollama account', _ollamaAccount(ollama, account)),
-        const Fact('Your footage', 'Stays on this Mac. Hosted models are never offered'),
+        const Fact('AI models', 'Local only. Hosted models are never offered'),
       ],
     );
   }
@@ -191,8 +192,10 @@ class _SettingsPageState extends State<SettingsPage> {
               serversKey: _places['servers'],
               stylesKey: _places['styles'],
             ),
+          _at('brand', BrandKit(model: model)),
           _at('license', LicenseSettings(model: model)),
-          _at('account', _account(settings)),
+          _at('account', AccountSettings(model: model, onStartTour: widget.onStartTour)),
+          _at('mac', _account(settings)),
           _at('ollama', _ollama(settings)),
           Section(
             key: _places['about'],

@@ -152,7 +152,7 @@ class PartPhotos extends StatelessWidget {
   final ProjectModel model;
 
   Future<void> _add() async {
-    const pictures = XTypeGroup(label: 'Photos and 3D models', extensions: [...pictureExtensions, ...modelExtensions]);
+    const pictures = XTypeGroup(label: 'Photos, 3D models and sketches', extensions: [...pictureExtensions, ...modelExtensions, ...codeExtensions]);
     final files = await openFiles(acceptedTypeGroups: [pictures]);
     if (files.isEmpty) return;
     await model.run('add_pictures', {'paths': [for (final file in files) file.path]}, 'Adding your photos');
@@ -167,7 +167,8 @@ class PartPhotos extends StatelessWidget {
       children: [
         const Text('New videos use these first, then look on Wikimedia Commons. A photo is found by its name and by what you say it shows.', style: tiny),
         const SizedBox(height: 4),
-        const Text('A 3D model replaces a part\'s built-in shapes: servo.glb for the whole part, servo-motor.stl and so on for the inside view.', style: tiny),
+        const Text('A 3D model replaces a part\'s built-in shapes: servo.glb for the whole part, servo-motor.stl and so on for the inside view. '
+            'An .ino sketch is what a scene about the code shows.', style: tiny),
         const SizedBox(height: 8),
         if (photos.isNotEmpty) ...[
           if (unused > 0 && photos.any((photo) => (photo['scenes'] as List).isNotEmpty))
@@ -262,7 +263,7 @@ class _PhotoTileState extends State<_PhotoTile> {
               child: picture
                   ? Image.file(File(photo['path'] as String), width: _tile, height: 80, fit: BoxFit.contain, cacheWidth: 250,
                       errorBuilder: (_, _, _) => const SizedBox.shrink())
-                  : const Text('3D model', style: tiny),
+                  : Text(photo['kind'] == 'code' ? 'Sketch' : '3D model', style: tiny),
             ),
           ),
           const SizedBox(height: 4),

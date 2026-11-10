@@ -16,10 +16,15 @@ import 'fake_api.dart';
 /// Answers the native folder picker, which a test has no window for.
 class FakePicker extends FileSelectorPlatform {
   final List<String> folders = [];
+  final List<String> files = [];
 
   @override
   Future<String?> getDirectoryPath({String? initialDirectory, String? confirmButtonText}) async =>
       folders.isEmpty ? null : folders.removeAt(0);
+
+  @override
+  Future<XFile?> openFile({List<XTypeGroup>? acceptedTypeGroups, String? initialDirectory, String? confirmButtonText}) async =>
+      files.isEmpty ? null : XFile(files.removeAt(0));
 }
 
 Future<void> launch(WidgetTester tester, FakeApi api) async {
@@ -53,7 +58,7 @@ void main() {
     await launch(tester, FakeApi());
     expect(find.text('Ready. Open or make a project to start.'), findsOneWidget);
     expect(find.text('older'), findsOneWidget);
-    for (final page in ['Footage', 'Style', 'Review', 'Resolve', 'Activity']) {
+    for (final page in ['Footage', 'Style', 'Review', 'Resolve', 'Make', 'Activity']) {
       await go(tester, page);
       expect(find.text('Open a project first'), findsWidgets);
     }
@@ -1396,18 +1401,82 @@ void main() {
     expect(find.text('Rendering scene 2 of 6, 300 of 1200 frames, 1:20 left'), findsNothing);
   });
 
+  group('playing, timing and branding', () {
+    final message = {'id': 2, 'role': 'assistant', 'text': 'I made a 30-second video.', 'model': 'qwen3:8b', 'plan_id': null, 'created_at': '2026-11-08',
+      'waiting_tool': false, 'video': {'clip': 'ast_2', 'project': '/p/video-1.ecproj', 'start': 0, 'path': '/nowhere/video-1.mp4', 'upright': true,
+        'scenes': [
+          {'number': 1, 'start': 0.0, 'end': 5.0, 'text': 'Meet the HC-SR04'},
+          {'number': 2, 'start': 5.0, 'end': 12.0, 'text': 'Ping, echo, distance'},
+          {'number': 3, 'start': 12.0, 'end': 16.0, 'text': 'See the world with sound'},
+        ]}};
+
+    testWidgets('a made video plays in the conversation, and the scene under the playhead is changed in words', (tester) async {
+      await opened(tester, chat: chatView(messages: [message]));
+      await go(tester, 'Assistant');
+      expect(find.byTooltip('Play the video'), findsOneWidget);
+      expect(find.text('Change scene 1'), findsOneWidget);
+      await tester.tap(find.byTooltip('Scene 2: Ping, echo, distance'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Change scene 2'));
+      await tester.pumpAndSettle();
+      expect(find.widgetWithText(TextField, 'change scene 2 to '), findsOneWidget);
+    });
+
+    testWidgets('the storyboard is a timeline: a scene is made longer from its still, and zones show where apps draw', (tester) async {
+      final draft = {
+        'reference': '', 'references': <Json>[], 'pictures': <Json>[], 'keynote': true, 'upright': true,
+        'storyboard': [
+          {'scene': 1, 'path': '/nowhere/a.png', 'seconds': 4.5},
+          {'scene': 2, 'path': '/nowhere/b.png', 'seconds': 7.0},
+        ],
+      };
+      final api = await opened(tester, chat: chatView(messages: [message], draft: draft));
+      await go(tester, 'Assistant');
+      expect(find.text('2 · 7.0 s'), findsOneWidget);
+      await tester.tap(find.byTooltip('Scene 2'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Longer'));
+      await tester.pumpAndSettle();
+      expect(api.actions.last.$2, {'text': 'make scene 2 longer', 'plan': 'pln_r001'});
+      expect(find.byKey(const ValueKey('safe-zone')), findsNothing);
+      await tester.tap(find.text('Show safe zones'));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('safe-zone')), findsWidgets);
+      await tester.tap(find.text('Hide safe zones'));
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets('a logo is chosen once for this Mac, and where it goes is switched on or off', (tester) async {
+      final picker = FakePicker()..files.add('/logos/me.png');
+      FileSelectorPlatform.instance = picker;
+      final api = FakeApi();
+      await launch(tester, api);
+      await go(tester, 'Settings');
+      await tester.scrollUntilVisible(find.text('Choose a logo'), 300, scrollable: find.byType(Scrollable).first);
+      await tester.tap(find.text('Choose a logo'));
+      await tester.pumpAndSettle();
+      expect(api.brandChanges.last, {'logo': '/logos/me.png'});
+      await tester.tap(find.text('In the corner of every new video'));
+      await tester.pumpAndSettle();
+      expect(api.brandChanges.last, {'watermark': false});
+      await tester.tap(find.text('Remove').last);
+      await tester.pumpAndSettle();
+      expect(api.brandChanges.last, {'remove': true});
+    });
+  });
+
   group('photos in', () {
     testWidgets('dropped photos join the project, and anything else is refused in words', (tester) async {
       final api = await opened(tester);
       Drops.instance.hover(true);
       await tester.pump(const Duration(milliseconds: 300));
-      expect(find.text('Drop photos, 3D models or a video'), findsOneWidget);
+      expect(find.text('Drop photos, 3D models, sketches or a video'), findsOneWidget);
       Drops.instance.drop(['/Users/me/drone.JPG', '/Users/me/servo.stl', '/Users/me/notes.pdf']);
       await tester.pumpAndSettle();
       expect(Drops.instance.over, isFalse);
       expect(api.actions.last.$1, 'add_pictures');
       expect(api.actions.last.$2, {'paths': ['/Users/me/drone.JPG', '/Users/me/servo.stl']});
-      expect(find.textContaining("notes.pdf isn't a photo, 3D model or video"), findsOneWidget);
+      expect(find.textContaining("notes.pdf isn't a photo, 3D model, sketch or video"), findsOneWidget);
     });
 
     testWidgets('a dropped video asks what it is for', (tester) async {
@@ -1449,6 +1518,172 @@ void main() {
       await tester.tap(find.text('Describe my photos'));
       await tester.pumpAndSettle();
       expect(api.actions.last.$1, 'describe_photos');
+    });
+  });
+
+  group('the gallery', () {
+    Json gallery() => {
+          'templates': [
+            {
+              'id': 'title_card', 'name': 'Title card', 'about': 'Your words, landing one by one.', 'seconds': 4, 'overlay': false,
+              'fields': [
+                {'key': 'title', 'label': 'Title', 'kind': 'text', 'hint': 'Up to 40 characters', 'required': true, 'limit': 40, 'most': 1, 'fewest': 1, 'default': ''},
+              ],
+            },
+            {
+              'id': 'callout', 'name': 'Callout', 'about': 'Rings on the spots you click.', 'seconds': 6, 'overlay': false,
+              'fields': [
+                {'key': 'photo', 'label': 'Photo', 'kind': 'photo', 'hint': '', 'required': true, 'limit': 40, 'most': 1, 'fewest': 1, 'default': ''},
+                {'key': 'spots', 'label': 'Spots', 'kind': 'spots', 'hint': '', 'required': true, 'limit': 24, 'most': 3, 'fewest': 1, 'default': ''},
+              ],
+            },
+            {
+              'id': 'lower_third', 'name': 'Lower third', 'about': 'Your name over your footage.', 'seconds': 5, 'overlay': true,
+              'fields': [
+                {'key': 'name', 'label': 'Name', 'kind': 'text', 'hint': '', 'required': true, 'limit': 40, 'most': 1, 'fewest': 1, 'default': ''},
+              ],
+            },
+          ],
+          'parts': [{'key': 'bluetooth', 'name': 'HC-05 Bluetooth module'}],
+          'photos': <String>[],
+          'clips': <Json>[],
+          'brand_logo': false,
+          'shapes': ['upright', 'square', 'wide'],
+        };
+
+    testWidgets('a template is filled in, previewed after a pause, and made', (tester) async {
+      final api = await opened(tester);
+      api.outcome = (action, body) => switch (action) {
+            'gallery' => {'state': 'done', 'result': gallery()},
+            'template_preview' => {'state': 'done', 'result': {'path': '/nowhere/still.png', 'problems': <String>[], 'overlay': false}},
+            'make_template' => {
+                'state': 'done',
+                'result': {'path': '/nowhere/title_card-1.mp4', 'overlay': false, 'seconds': 4, 'upright': true, 'answer': 'I made title card, 4 seconds.'},
+              },
+            _ => {'name': action, 'state': 'done'},
+          };
+      await go(tester, 'Make');
+      await tester.pumpAndSettle();
+      expect(find.text('Title card'), findsOneWidget);
+      expect(find.text('overlay'), findsOneWidget, reason: 'a lower third says it has a clear background');
+      await tester.tap(find.text('Title card'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.widgetWithText(TextField, 'Title'), 'Meet the servo');
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(api.actions.where((action) => action.$1 == 'template_preview'), isEmpty, reason: 'nothing is drawn while a person is typing');
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pumpAndSettle();
+      final preview = api.actions.lastWhere((action) => action.$1 == 'template_preview');
+      expect(preview.$2, {'template': 'title_card', 'values': {'title': 'Meet the servo'}, 'shape': 'upright'});
+      await tester.tap(find.text('1:1'));
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pumpAndSettle();
+      expect(api.actions.lastWhere((action) => action.$1 == 'template_preview').$2['shape'], 'square');
+      await tester.tap(find.text('Make it'));
+      await tester.pumpAndSettle();
+      expect(api.actions.last.$1, 'make_template');
+      expect(find.text('I made title card, 4 seconds.'), findsOneWidget);
+    });
+
+    testWidgets("what a template still needs is said beside the form, and a callout asks for its photo first", (tester) async {
+      final api = await opened(tester);
+      api.outcome = (action, body) => switch (action) {
+            'gallery' => {'state': 'done', 'result': gallery()},
+            'template_preview' => {'state': 'failed', 'needs': 'user', 'error': 'Callout needs spots.'},
+            _ => {'name': action, 'state': 'done'},
+          };
+      await go(tester, 'Make');
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Callout'));
+      await tester.pumpAndSettle();
+      expect(find.text('Choose the photo first.'), findsOneWidget);
+      expect(find.text('Add photos on the Assistant page first.'), findsOneWidget);
+      await tester.tap(find.text('1:1'));
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pumpAndSettle();
+      expect(find.text('Callout needs spots.'), findsOneWidget);
+      await tester.tap(find.text('All templates'));
+      await tester.pumpAndSettle();
+      expect(find.text('Lower third'), findsOneWidget);
+    });
+  });
+
+  group('a new Mac', () {
+    testWidgets('the welcome opens once, and the tour walks the side bar and is never shown again', (tester) async {
+      final api = FakeApi()..appSettings = {...settingsView(), 'onboarded': false};
+      await launch(tester, api);
+      expect(find.text('Welcome to AI Editor'), findsOneWidget);
+      expect(find.descendant(of: find.byType(AlertDialog), matching: find.text('Create account')), findsOneWidget, reason: 'an account is offered, and optional');
+      await tester.tap(find.text('Take the tour'));
+      await tester.pumpAndSettle();
+      expect(find.text('1 of 8'), findsOneWidget);
+      expect(find.text('Start with a project'), findsOneWidget);
+      for (var step = 1; step < 8; step++) {
+        await tester.tap(find.text('Next'));
+        await tester.pumpAndSettle();
+      }
+      expect(find.text('8 of 8'), findsOneWidget);
+      expect(find.text('Your account'), findsOneWidget);
+      await tester.tap(find.text('Done'));
+      await tester.pumpAndSettle();
+      expect(find.text('8 of 8'), findsNothing);
+      expect(api.appSettings['onboarded'], true);
+    });
+
+    testWidgets('skipping the welcome counts as having seen it, and the tour can be taken again from Settings', (tester) async {
+      final api = FakeApi()..appSettings = {...settingsView(), 'onboarded': false};
+      await launch(tester, api);
+      await tester.tap(find.text('Skip'));
+      await tester.pumpAndSettle();
+      expect(api.appSettings['onboarded'], true);
+      await go(tester, 'Settings');
+      await tester.ensureVisible(find.text('Take the tour again'));
+      await tester.tap(find.text('Take the tour again'));
+      await tester.pumpAndSettle();
+      expect(find.text('1 of 8'), findsOneWidget);
+      await tester.tap(find.text('Skip tour'));
+      await tester.pumpAndSettle();
+      expect(find.text('1 of 8'), findsNothing);
+    });
+
+    testWidgets('an account is made and signed in from Settings, a wrong password is said, and signing out ends it', (tester) async {
+      final api = FakeApi();
+      await launch(tester, api);
+      await go(tester, 'Settings');
+      expect(find.text('Sign in to unlock Pro on this Mac. The app works the same without an account.'), findsOneWidget);
+      await tester.ensureVisible(find.widgetWithText(TextButton, 'Sign in'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(TextButton, 'Sign in'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.widgetWithText(TextField, 'Email'), 'sam@example.com');
+      await tester.enterText(find.widgetWithText(TextField, 'Password'), 'wrong password');
+      await tester.tap(find.descendant(of: find.byType(AlertDialog), matching: find.widgetWithText(FilledButton, 'Sign in')));
+      await tester.pumpAndSettle();
+      expect(find.text("That email and password didn't match an account."), findsOneWidget);
+      await tester.tap(find.text('Create an account'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.widgetWithText(TextField, 'Password'), 'correct horse');
+      await tester.tap(find.descendant(of: find.byType(AlertDialog), matching: find.widgetWithText(FilledButton, 'Create account')));
+      await tester.pumpAndSettle();
+      expect(api.accountCalls.last.$1, 'signup');
+      expect(api.accountCalls.last.$2, {'email': 'sam@example.com', 'password': 'correct horse'});
+      expect(find.text('Signed in as sam@example.com. Plan: Pro.'), findsOneWidget);
+      await tester.ensureVisible(find.text('Sign out'));
+      await tester.tap(find.text('Sign out'));
+      await tester.pumpAndSettle();
+      expect(api.accountCalls.last.$1, 'logout');
+      expect(find.text('Sign in to unlock Pro on this Mac. The app works the same without an account.'), findsOneWidget);
+    });
+
+    testWidgets('a build with no account service says sign in is off, and the welcome offers none', (tester) async {
+      final api = FakeApi()..appSettings = {...settingsView(), 'onboarded': false, 'account': accountView(configured: false)};
+      await launch(tester, api);
+      expect(find.text('Welcome to AI Editor'), findsOneWidget);
+      expect(find.descendant(of: find.byType(AlertDialog), matching: find.text('Create account')), findsNothing);
+      await tester.tap(find.text('Skip'));
+      await tester.pumpAndSettle();
+      await go(tester, 'Settings');
+      expect(find.textContaining("isn't connected to an account service"), findsOneWidget);
     });
   });
 
@@ -1508,7 +1743,7 @@ void main() {
       expect(find.text('llama3.2:3b'), findsOneWidget);
       expect(find.text('Test Person'), findsOneWidget);
       expect(find.text('tester'), findsOneWidget);
-      expect(find.textContaining('No sign-in, subscription or API key'), findsOneWidget);
+      expect(find.textContaining('The app works the same without an account'), findsOneWidget);
       expect(find.textContaining('Not signed in'), findsOneWidget);
       expect(find.textContaining('the only model tested'), findsOneWidget);
     });

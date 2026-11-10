@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 const pictureExtensions = ['png', 'jpg', 'jpeg', 'webp'];
 const modelExtensions = ['glb', 'gltf', 'stl', 'obj'];
 const videoExtensions = ['mp4', 'mov', 'mkv', 'm4v', 'webm'];
+const codeExtensions = ['ino', 'cpp', 'c', 'h'];
 
 String _extension(String path) {
   final name = path.split('/').last;
@@ -11,13 +12,13 @@ String _extension(String path) {
   return dot < 0 ? '' : name.substring(dot + 1).toLowerCase();
 }
 
-/// What dropped files are for: photos and 3D models for new videos, videos to choose a use
+/// What dropped files are for: photos, 3D models and sketches for new videos, videos to choose a use
 /// for, and anything else, which is refused in words.
 ({List<String> photos, List<String> videos, List<String> other}) sortDropped(List<String> paths) {
   final photos = <String>[], videos = <String>[], other = <String>[];
   for (final path in paths) {
     final extension = _extension(path);
-    if (pictureExtensions.contains(extension) || modelExtensions.contains(extension)) {
+    if (pictureExtensions.contains(extension) || modelExtensions.contains(extension) || codeExtensions.contains(extension)) {
       photos.add(path);
     } else if (videoExtensions.contains(extension)) {
       videos.add(path);

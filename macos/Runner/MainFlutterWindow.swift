@@ -60,7 +60,9 @@ private func shareNotifications(with controller: FlutterViewController) -> Flutt
   return channel
 }
 
-class MainFlutterWindow: NSWindow {
+/// The window takes files dropped on it. NSWindow doesn't declare these methods to Swift, so it adopts the
+/// drop-target protocol itself, and AppKit calls them because the window registered for file drops.
+class MainFlutterWindow: NSWindow, NSDraggingDestination {
   private var notifyChannel: FlutterMethodChannel?
   private var reduceMotionObserver: NSObjectProtocol?
   /// Files dropped on the window go to Flutter as paths, which decides what each one is for. No package
@@ -72,21 +74,21 @@ class MainFlutterWindow: NSWindow {
     return urls.map { $0.path }
   }
 
-  override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+  func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
     guard !droppedFiles(sender).isEmpty else { return [] }
     dropChannel?.invokeMethod("over", arguments: true)
     return .copy
   }
 
-  override func draggingExited(_ sender: NSDraggingInfo?) {
+  func draggingExited(_ sender: NSDraggingInfo?) {
     dropChannel?.invokeMethod("over", arguments: false)
   }
 
-  override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
+  func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
     return !droppedFiles(sender).isEmpty
   }
 
-  override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+  func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
     let paths = droppedFiles(sender)
     dropChannel?.invokeMethod("over", arguments: false)
     guard !paths.isEmpty else { return false }
@@ -94,7 +96,7 @@ class MainFlutterWindow: NSWindow {
     return true
   }
 
-  override func concludeDragOperation(_ sender: NSDraggingInfo?) {
+  func concludeDragOperation(_ sender: NSDraggingInfo?) {
     dropChannel?.invokeMethod("over", arguments: false)
   }
 

@@ -196,8 +196,40 @@ class FakeApi implements Api {
     };
   }
 
+  final List<Json> brandChanges = [];
+
+  @override
+  Future<Json> changeBrand(Json body) async {
+    brandChanges.add(body);
+    final brand = {...(appSettings['brand'] as Json? ?? {'logo': '', 'watermark': false, 'outro': false})};
+    if (body['remove'] == true) {
+      brand.addAll({'logo': '', 'watermark': false, 'outro': false});
+    } else if (body['logo'] != null) {
+      brand.addAll({'logo': '/brand/logo.png', 'watermark': true, 'outro': true});
+    } else {
+      brand.addAll({for (final key in ['watermark', 'outro']) if (body.containsKey(key)) key: body[key]});
+    }
+    return appSettings = {...appSettings, 'brand': brand};
+  }
+
   @override
   Future<Json> removeLicense() async => appSettings = {...appSettings, 'license': {'tier': 'free', 'pro': false, 'license': null}};
+
+  /// Each account call, and what the fake service answers: a password of "correct horse" signs in with a Pro plan.
+  final List<(String, Json)> accountCalls = [];
+
+  @override
+  Future<Json> account(String op, [Json body = const {}]) async {
+    accountCalls.add((op, body));
+    if (op == 'login' && body['password'] != 'correct horse') throw EngineError('That email and password didn\'t match an account.');
+    final signedIn = op == 'login' || (op == 'signup' && body['password'] == 'correct horse');
+    final view = op == 'logout' ? accountView() : signedIn ? accountView(email: body['email'] as String, plan: 'pro') : appSettings['account'] as Json;
+    appSettings = {...appSettings, 'account': view, 'license': {'tier': signedIn ? 'pro' : 'free', 'pro': signedIn, 'license': null, 'by': signedIn ? 'account' : ''}};
+    return {...view, 'license': appSettings['license'], if (op == 'reset') 'said': 'If ${body['email']} has an account, a link to choose a new password is on its way.'};
+  }
+
+  @override
+  Future<Json> setOnboarded(bool done) async => appSettings = {...appSettings, 'onboarded': done};
 
   @override
   Future<Json> chat() async => chatState;
@@ -245,7 +277,13 @@ Json settingsView({String fallback = 'qwen3:8b', Json? ollama}) => {
     ],
     'claude_servers': <Json>[],
   },
+  // Most tests start on a Mac that has seen the welcome, so it doesn't stand over the page they test.
+  'onboarded': true,
+  'account': accountView(),
 };
+
+Json accountView({bool configured = true, String email = '', String plan = ''}) =>
+    {'configured': configured, 'signed_in': email.isNotEmpty, 'email': email, 'plan': plan, 'checked': '', 'pro_until': '', 'confirm_sent': ''};
 
 Json chatView({List<Json> messages = const [], List<Json> memory = const [], String? choice, Json? brief, bool canEdit = true, List<Json> replies = const [], Json? draft}) => {
   'messages': messages,
